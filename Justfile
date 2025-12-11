@@ -4,13 +4,24 @@ vault := "Private"
 # Run full suite
 test: build test-crypto test-integration
 
+# Build helper via xcodebuild
+build-mac-helper:
+    mkdir -p ../target/release
+    cd kage-mac-helper && xcodebuild \
+      -project KageHelper/KageHelper.xcodeproj \
+      -scheme KageHelper \
+      -configuration Release \
+      -derivedDataPath .xcodebuild
+    rm -rf target/release/KageHelper.app
+    # Remove stale side-by-side binary to ensure CLI uses the bundle
+    rm -f target/release/kage-mac-helper
+    cp -R kage-mac-helper/.xcodebuild/Build/Products/Release/KageHelper.app target/release/
+
 # Build release binaries
 build:
     cargo build --release -p kage-cli
     @if [ "$(uname)" == "Darwin" ]; then \
-        cd kage-mac-helper && swift build -c release; \
-        codesign -s - --force .build/release/kage-mac-helper; \
-        cp .build/release/kage-mac-helper ../target/release/; \
+        just build-mac-helper; \
     fi
 
 # Validate Bech32 and HKDF
@@ -37,9 +48,33 @@ test-integration vault_arg="Private": build
     # 2. Get Identity
     ./target/release/kage-cli age-identities --env dev > /tmp/id
     
-    # 3. Encrypt/Decrypt Check
-    echo "secret" | sops -e --age $(cat /tmp/id | age-keygen -y) /dev/stdin > /tmp/test.sops
-    SOPS_AGE_KEY=$(cat /tmp/id) sops -d /tmp/test.sops
+    # 3. Extract a single secret key line (age format)
+    # The grep ensures we only get the key line, and head -n1 ensures we only get one if there are duplicates/comments
+    AGE_SECRET_KEY="$(grep '^AGE-SECRET-KEY' /tmp/id | head -n1)"
+    
+    if [ -z "$AGE_SECRET_KEY" ]; then
+        echo "Error: No AGE-SECRET-KEY found in output"
+        cat /tmp/id
+        exit 1
+    fi
+
+    # Derive the recipient (public key)
+    AGE_RECIPIENT="$(printf '%s\n' "$AGE_SECRET_KEY" | age-keygen -y)"
+    
+    # 4. Encrypt a test secret using the recipient
+    echo "secret" | SOPS_AGE_KEY="$(cat /tmp/id)" \
+        sops -e --age "$AGE_RECIPIENT" /dev/stdin > /tmp/test.sops
+    
+    # 5. Decrypt using the identity
+    # Quote the variable to preserve newlines
+    SOPS_AGE_KEY="$(cat /tmp/id)" sops -d /tmp/test.sops
     
     echo "Integration test passed!"
+
+# Dev Mode helpers
+dev-cli +args: build
+    KAGE_LOCAL_DEV=1 ./target/release/kage-cli {{args}}
+
+dev-init env="dev" vault="Private": build
+    KAGE_LOCAL_DEV=1 ./target/release/kage-cli init --org-id my-company --env {{env}} --1p-vault "{{vault}}" --non-interactive
 
