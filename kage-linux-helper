@@ -1,0 +1,163 @@
+#!/bin/bash
+set -euo pipefail
+
+# Kage Linux Helper (TPM2)
+# Usage: ./kage-linux-helper <command> <handle> [--policy <policy>]
+
+EXIT_SUCCESS=0
+EXIT_KEY_NOT_FOUND=1
+EXIT_AUTH_FAILED=2
+EXIT_AUTH_NOT_ENROLLED=3
+EXIT_CRYPTO_FAILED=4
+EXIT_INVALID_INPUT=5
+EXIT_BACKEND_UNAVAILABLE=6
+
+die() {
+    echo "$2" >&2
+    exit "$1"
+}
+
+check_avail() {
+    if ! command -v tpm2_createprimary >/dev/null; then
+        exit $EXIT_BACKEND_UNAVAILABLE
+    fi
+    # Try to list handles to check TPM access
+    if ! tpm2_getcap handles-persistent >/dev/null 2>&1; then
+        exit $EXIT_BACKEND_UNAVAILABLE
+    fi
+    exit $EXIT_SUCCESS
+}
+
+# Parse args
+CMD="${1:-}"
+HANDLE="${2:-}"
+POLICY="none"
+
+shift 2 || true
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --policy)
+            POLICY="$2"
+            shift 2
+            ;;
+        *)
+            shift
+            ;;
+    esac
+done
+
+if [[ -z "$CMD" ]]; then
+    die $EXIT_INVALID_INPUT "No command provided"
+fi
+
+if [[ "$CMD" == "check" ]]; then
+    check_avail
+fi
+
+if [[ -z "$HANDLE" ]]; then
+    die $EXIT_INVALID_INPUT "No handle provided"
+fi
+
+# TPM2 commands
+case "$CMD" in
+    init-key)
+        # Create primary key if not exists (we use primary for simplicity or persistent key?)
+        # Spec says: "The TPM2 backend uses a single persistent key handle defined in config."
+        # "ensure_key: Create a key... if it doesn't exist."
+        
+        # Check if handle exists
+        if tpm2_getcap handles-persistent | grep -q "$HANDLE"; then
+            exit $EXIT_SUCCESS
+        fi
+        
+        # Create primary
+        # We need to create a primary key under owner hierarchy, then evict it to persistent handle.
+        # But wait, we usually create a key *under* a primary.
+        # For simplicity in v1 as a shim:
+        # Create a primary RSA key and make it persistent at HANDLE.
+        
+        # Policy handling
+        # If policy is presence/strong, we need to set auth.
+        AUTH_OPTS=""
+        if [[ "$POLICY" == "presence" ]] || [[ "$POLICY" == "strong" ]]; then
+             # Expect TPM_PIN env var?
+             # Spec: "If PIN is required but not provided... treat as Auth Not Enrolled"
+             if [[ -z "${TPM_PIN:-}" ]]; then
+                  die $EXIT_AUTH_NOT_ENROLLED "TPM_PIN required"
+             fi
+             AUTH_OPTS="-p $TPM_PIN"
+        fi
+        
+        # Create primary context
+        tpm2_createprimary -C o -c primary.ctx -G rsa2048:aes128cfb $AUTH_OPTS \
+             || die $EXIT_CRYPTO_FAILED "Create primary failed"
+        
+        # Evict to persistent handle
+        tpm2_evictcontrol -C o -c primary.ctx "$HANDLE" \
+             || die $EXIT_CRYPTO_FAILED "Evict failed"
+        
+        rm -f primary.ctx
+        ;;
+        
+    encrypt)
+        # Wrap plaintext.
+        # tpm2_rsaencrypt requires a public key or loaded context.
+        # We can use the persistent handle directly.
+        
+        # Read stdin to temp file
+        cat > plaintext.bin
+        
+        tpm2_rsaencrypt -c "$HANDLE" -o ciphertext.bin plaintext.bin \
+            || die $EXIT_CRYPTO_FAILED "Encryption failed"
+            
+        cat ciphertext.bin
+        rm -f plaintext.bin ciphertext.bin
+        ;;
+        
+    decrypt)
+        # Unwrap ciphertext.
+        # Read stdin
+        cat > ciphertext.bin
+        
+        AUTH_OPTS=""
+        if [[ "$POLICY" == "presence" ]] || [[ "$POLICY" == "strong" ]]; then
+             if [[ -z "${TPM_PIN:-}" ]]; then
+                 # Try to read from tty if possible (unlikely in non-interactive pipeline, but per spec)
+                 # Spec snippet: "[[ -t 0 ]] && { read ... } || die ..."
+                 # But we just consumed stdin for ciphertext!
+                 # So we rely on env var or out-of-band pin entry.
+                 die $EXIT_AUTH_NOT_ENROLLED "TPM_PIN required"
+             fi
+             AUTH_OPTS="-p $TPM_PIN"
+        fi
+        
+        tpm2_rsadecrypt -c "$HANDLE" -o plaintext.bin ciphertext.bin $AUTH_OPTS \
+            || die $EXIT_AUTH_FAILED "Decryption failed"
+            
+        cat plaintext.bin
+        rm -f ciphertext.bin plaintext.bin
+        ;;
+        
+    rotate-key)
+        # Delete and re-create?
+        # rotate-device-key command in CLI handles the flow.
+        # Here we might need a delete command?
+        # Spec says "Reset Key: Delete existing hardware key... Re-create: Call ensure_key"
+        # So we assume "ensure_key" is init-key. We need a "delete-key" or "reset-key"?
+        # The helper contract in main.swift didn't have delete.
+        # But Rust CLI can call helper with any command.
+        die $EXIT_INVALID_INPUT "Use tpm2_evictcontrol manually or implement delete-key"
+        ;;
+        
+    delete-key)
+        if tpm2_getcap handles-persistent | grep -q "$HANDLE"; then
+             tpm2_evictcontrol -C o -c "$HANDLE" \
+                 || die $EXIT_CRYPTO_FAILED "Evict/Delete failed"
+        fi
+        ;;
+
+    *)
+        die $EXIT_INVALID_INPUT "Unknown command: $CMD"
+        ;;
+esac
+
