@@ -12,7 +12,7 @@ pub fn derive_k_env(k_org: &[u8], env: &str) -> [u8; 32] {
 }
 
 pub fn bech32_age_secret(k_env: &[u8; 32]) -> Result<String> {
-    let hrp = "age-secret-key";
+    let hrp = "age-secret-key-";
     let data = k_env.to_base32();
     let encoded = bech32::encode(hrp, data, Variant::Bech32)?;
     Ok(encoded.to_uppercase())
