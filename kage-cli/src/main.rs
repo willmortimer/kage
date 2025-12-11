@@ -191,7 +191,7 @@ fn main() -> anyhow::Result<()> {
                 .join(format!("{}.bin", config.device.id));
                 
             if !blob_path.exists() {
-                 anyhow::bail!("Key blob not found for env {}", env);
+                 anyhow::bail!("Key blob not found for env '{}'. Has this device been initialized with `kage-cli init`?", env);
             }
             
             let wrapped = fs::read(blob_path)?;
