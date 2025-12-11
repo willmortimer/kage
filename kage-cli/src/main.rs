@@ -222,7 +222,7 @@ fn main() -> anyhow::Result<()> {
                 .join(format!("{}.bin", config.device.id));
                 
             if !blob_path.exists() {
-                 anyhow::bail!("Key blob not found for env {}", env);
+                 anyhow::bail!("Key blob not found for env '{}'. Has this device been initialized with `kage-cli init`?", env);
             }
             
             let wrapped = fs::read(&blob_path)?;
@@ -237,7 +237,36 @@ fn main() -> anyhow::Result<()> {
             };
             
             // 1. Unwrap old
-            let k_env = keystore.unwrap(&wrapped, &label, policy)?;
+            // If unwrap fails (e.g. stale ACLs or auth failure), we fallback to 1Password recovery
+            let k_env = match keystore.unwrap(&wrapped, &label, policy) {
+                Ok(bytes) => bytes,
+                Err(e) => {
+                    let msg = e.to_string();
+                    // Check for Auth Failed (2), Auth Not Enrolled (3), or helper stderr containing interaction/auth keywords
+                    // Also check for "Helper decrypt failed" which is the generic wrapper for stderr output
+                    if msg.contains("Auth Failed") || msg.contains("Auth Not Enrolled") || msg.contains("interaction") || msg.contains("deny") {
+                        eprintln!("Warning: Unwrap blocked by ACL / interaction policy ({}). Recovering from 1Password...", msg);
+                        // Re-instantiate backend and fetch
+                        let (item_id, k_org) = backend.ensure_k_org(
+                            &config.backend.onepassword.vault, 
+                            config.backend.onepassword.item_id.as_deref()
+                        )?;
+                        
+                        // Update config if item_id changed (unlikely but possible)
+                        if config.backend.onepassword.item_id.as_deref() != Some(&item_id) {
+                             let mut new_config = config.clone();
+                             new_config.backend.onepassword.item_id = Some(item_id);
+                             save_config(&new_config)?;
+                        }
+
+                        // Derive k_env
+                        derive_k_env(&k_org, &env).to_vec()
+                    } else {
+                        // For other errors (IO, binary missing, etc.), bail out
+                        return Err(e.into());
+                    }
+                }
+            };
             
             // 2. Delete
             keystore.delete_key(&label)?;
