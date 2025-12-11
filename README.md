@@ -30,7 +30,7 @@ This builds the Rust CLI (`kage-cli`) and the macOS Helper App (`KageHelper.app`
 Initialize an organization and enroll the current device. This fetches the master key from 1Password and derives per-environment keys.
 
 ```bash
-# Standard Init
+# Standard Init (Production/Staging - Requires properly signed binary)
 ./target/release/kage-cli init --org-id my-org --env dev --1p-vault "Private"
 
 # Local Dev Mode (Recommended for testing)
@@ -96,3 +96,4 @@ If `KAGE_USE_AGENT` is not set, `kage-cli` spawns `KageHelper.app` as a one-shot
 *   **`Invalid key length`**: Usually means the helper binary is printing debug info to stdout. Ensure you have the latest build (`just build`).
 *   **`Connection refused`**: The Agent is not running. Run `open target/release/KageHelper.app`.
 *   **`-34018` / `errSecMissingEntitlement`**: Code signing issue. Ensure the app is signed with a certificate that has a stable Team ID (or use `KAGE_LOCAL_DEV=1` to bypass strict ACLs).
+*   **`-1009` / `ACL operation is not allowed`**: This confirms that macOS is blocking strict access controls (Biometry/Passcode) for the local build. You **must** use `KAGE_LOCAL_DEV=1` to downgrade to a supported policy (No ACL).

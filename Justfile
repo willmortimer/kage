@@ -79,3 +79,7 @@ dev-cli +args: build
 dev-init env="dev" vault="Private": build
     KAGE_LOCAL_DEV=1 ./target/release/kage-cli init --org-id my-company --env {{env}} --1p-vault "{{vault}}" --non-interactive
 
+# Restart KageHelper app
+restart:
+    pkill KageHelper && open target/release/KageHelper.app
+
