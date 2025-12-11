@@ -1,0 +1,7 @@
+[workspace]
+members = [
+    "kage-core",
+    "kage-cli",
+]
+resolver = "2"
+
