@@ -14,33 +14,55 @@ impl HelperKeystore {
         let exe_dir = exe_path.parent().ok_or(KageError::Keystore("Cannot find exe dir".into()))?;
         
         #[cfg(target_os = "macos")]
-        let helper_name = "kage-mac-helper";
+        {
+            // Try App Bundle path first
+            // Xcode target "KageHelper" produces binary "KageHelper" inside the bundle
+            let app_path = exe_dir.join("KageHelper.app/Contents/MacOS/KageHelper");
+            if app_path.exists() {
+                return Ok(Self { helper_path: app_path });
+            }
+            
+            // Fallback to side-by-side binary (old way)
+            let raw_path = exe_dir.join("kage-mac-helper");
+            if raw_path.exists() {
+                return Ok(Self { helper_path: raw_path });
+            }
+        }
+        
         #[cfg(target_os = "linux")]
         let helper_name = "kage-linux-helper";
-        
-        // Try same dir
-        let path = exe_dir.join(helper_name);
-        if path.exists() {
-            return Ok(Self { helper_path: path });
+        #[cfg(target_os = "linux")]
+        if 1==1 { // Scope for linux
+             let path = exe_dir.join(helper_name);
+             if path.exists() {
+                 return Ok(Self { helper_path: path });
+             }
         }
         
         // Try looking in PATH
-        if let Ok(path) = which::which(helper_name) {
+        let lookup_name = if cfg!(target_os = "macos") { "kage-mac-helper" } else { "kage-linux-helper" };
+        if let Ok(path) = which::which(lookup_name) {
             return Ok(Self { helper_path: path });
         }
 
-        Err(KageError::Keystore(format!("Helper binary {} not found", helper_name)))
+        Err(KageError::Keystore(format!("Helper binary not found")))
     }
 }
 
 impl DeviceKeystore for HelperKeystore {
     fn ensure_key(&self, label: &str, policy: &str) -> Result<()> {
-        let status = Command::new(&self.helper_path)
-            .arg("init-key")
+        let mut cmd = Command::new(&self.helper_path);
+        cmd.arg("init-key")
             .arg(label)
             .arg("--policy")
-            .arg(policy)
-            .status()
+            .arg(policy);
+            
+        // Propagate KAGE_LOCAL_DEV env var if set
+        if let Ok(val) = std::env::var("KAGE_LOCAL_DEV") {
+            cmd.env("KAGE_LOCAL_DEV", val);
+        }
+
+        let status = cmd.status()
             .map_err(|e| KageError::Keystore(format!("Failed to run helper: {}", e)))?;
 
         if status.success() {
@@ -51,14 +73,19 @@ impl DeviceKeystore for HelperKeystore {
     }
     
     fn wrap(&self, plaintext: &[u8], label: &str, policy: &str) -> Result<Vec<u8>> {
-        let mut child = Command::new(&self.helper_path)
-            .arg("encrypt")
+        let mut cmd = Command::new(&self.helper_path);
+        cmd.arg("encrypt")
             .arg(label)
             .arg("--policy")
             .arg(policy)
             .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .spawn()
+            .stdout(Stdio::piped());
+            
+        if let Ok(val) = std::env::var("KAGE_LOCAL_DEV") {
+            cmd.env("KAGE_LOCAL_DEV", val);
+        }
+
+        let mut child = cmd.spawn()
             .map_err(|e| KageError::Keystore(format!("Failed to spawn helper: {}", e)))?;
             
         if let Some(mut stdin) = child.stdin.take() {
@@ -75,14 +102,19 @@ impl DeviceKeystore for HelperKeystore {
     }
     
     fn unwrap(&self, ciphertext: &[u8], label: &str, policy: &str) -> Result<Vec<u8>> {
-        let mut child = Command::new(&self.helper_path)
-            .arg("decrypt")
+        let mut cmd = Command::new(&self.helper_path);
+        cmd.arg("decrypt")
             .arg(label)
             .arg("--policy")
             .arg(policy)
             .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .spawn()
+            .stdout(Stdio::piped());
+            
+        if let Ok(val) = std::env::var("KAGE_LOCAL_DEV") {
+            cmd.env("KAGE_LOCAL_DEV", val);
+        }
+
+        let mut child = cmd.spawn()
             .map_err(|e| KageError::Keystore(format!("Failed to spawn helper: {}", e)))?;
             
         if let Some(mut stdin) = child.stdin.take() {
