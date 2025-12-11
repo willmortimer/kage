@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kage: Hardware-Backed Key Management Infographic</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Plotly.js -->
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+
+    <!-- Palette: Vibrant Cyber-Security -->
+    <!-- Primary: #1e40af (Blue 800) -->
+    <!-- Accent 1: #06b6d4 (Cyan 500) -->
+    <!-- Accent 2: #7c3aed (Violet 600) -->
+    <!-- Background: #f3f4f6 (Gray 100) -->
+    <!-- Text: #111827 (Gray 900) -->
+
+    <style>
+        /* Custom Styles for Chart Containers */
+        .chart-container {
+            position: relative;
+            width: 100%;
+            max-width: 600px;
+            height: 350px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        @media (max-width: 640px) {
+            .chart-container {
+                height: 300px;
+            }
+        }
+
+        /* Connector Lines for Diagrams */
+        .connector-vertical {
+            width: 2px;
+            background-color: #9CA3AF; /* Gray 400 */
+            height: 2rem;
+            margin: 0 auto;
+        }
+
+        .connector-arrow-down {
+            width: 0; 
+            height: 0; 
+            border-left: 6px solid transparent;
+            border-right: 6px solid transparent;
+            border-top: 8px solid #9CA3AF;
+            margin: 0 auto;
+        }
+
+        /* Unicode Icons Styling */
+        .icon-large {
+            font-size: 2.5rem;
+            line-height: 1;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 text-gray-900 font-sans leading-relaxed">
+
+    <!-- Navigation / Header -->
+    <header class="bg-gradient-to-r from-blue-900 to-violet-800 text-white shadow-lg sticky top-0 z-50">
+        <div class="container mx-auto px-4 py-4 flex justify-between items-center">
+            <div>
+                <h1 class="text-2xl font-bold tracking-wider">KAGE</h1>
+                <p class="text-xs text-cyan-300 font-mono">SPECIFICATION v1.0</p>
+            </div>
+            <nav class="hidden md:block">
+                <ul class="flex space-x-6 text-sm font-medium">
+                    <li><a href="#philosophy" class="hover:text-cyan-300 transition">Philosophy</a></li>
+                    <li><a href="#architecture" class="hover:text-cyan-300 transition">Architecture</a></li>
+                    <li><a href="#security" class="hover:text-cyan-300 transition">Security</a></li>
+                    <li><a href="#hierarchy" class="hover:text-cyan-300 transition">Keys</a></li>
+                </ul>
+            </nav>
+        </div>
+    </header>
+
+    <main class="container mx-auto px-4 py-8 space-y-16">
+
+        <!-- Section 1: Introduction & Philosophy -->
+        <section id="philosophy" class="space-y-6">
+            <div class="bg-white rounded-xl shadow-md p-8 border-l-8 border-violet-600">
+                <h2 class="text-3xl font-bold text-blue-900 mb-4">Hardware-Backed Key Management</h2>
+                <p class="text-lg text-gray-700 mb-6">
+                    Kage acts as a secure bridge between your developer workflows (age/SOPS) and hardware security modules (Secure Enclave, TPM). It eliminates key sprawl and protects secrets at rest.
+                </p>
+                
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                    <!-- Core 1 -->
+                    <div class="bg-blue-50 p-6 rounded-lg text-center hover:shadow-lg transition">
+                        <div class="icon-large mb-3">🔑</div>
+                        <h3 class="font-bold text-blue-800 mb-2">Single Source</h3>
+                        <p class="text-sm text-gray-600">One master key (K_org) stored only in 1Password. No local copies.</p>
+                    </div>
+                    <!-- Core 2 -->
+                    <div class="bg-cyan-50 p-6 rounded-lg text-center hover:shadow-lg transition">
+                        <div class="icon-large mb-3">⚙️</div>
+                        <h3 class="font-bold text-cyan-800 mb-2">Deterministic</h3>
+                        <p class="text-sm text-gray-600">Per-environment keys derived via HKDF. Zero configuration drift.</p>
+                    </div>
+                    <!-- Core 3 -->
+                    <div class="bg-violet-50 p-6 rounded-lg text-center hover:shadow-lg transition">
+                        <div class="icon-large mb-3">🛡️</div>
+                        <h3 class="font-bold text-violet-800 mb-2">Hardware Wrapped</h3>
+                        <p class="text-sm text-gray-600">Keys on disk are encrypted by Secure Enclave or TPM.</p>
+                    </div>
+                    <!-- Core 4 -->
+                    <div class="bg-gray-50 p-6 rounded-lg text-center hover:shadow-lg transition">
+                        <div class="icon-large mb-3">👻</div>
+                        <h3 class="font-bold text-gray-800 mb-2">Ephemeral</h3>
+                        <p class="text-sm text-gray-600">Identities exist in memory only during decryption commands.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Section 2: Architecture Component Diagram -->
+        <section id="architecture">
+            <h2 class="text-2xl font-bold text-blue-900 mb-4 border-b-4 border-cyan-500 inline-block pb-1">System Architecture</h2>
+            <p class="mb-6 text-gray-700 max-w-3xl">
+                Kage orchestrates communication between the user's shell, cloud storage (1Password), and the local device's hardware security module. This diagram illustrates the flow of commands and secrets.
+            </p>
+            
+            <div class="bg-white rounded-xl shadow-md p-8 overflow-x-auto">
+                <!-- HTML/CSS Diagram mimicking Mermaid -->
+                <div class="flex flex-col items-center min-w-[600px]">
+                    <!-- User -->
+                    <div class="bg-gray-800 text-white px-6 py-3 rounded shadow font-mono mb-2">User Shell</div>
+                    
+                    <div class="connector-vertical"></div>
+                    <div class="connector-arrow-down"></div>
+                    
+                    <!-- CLI -->
+                    <div class="bg-blue-600 text-white px-8 py-4 rounded shadow-lg font-bold z-10 my-2">Kage CLI (Rust)</div>
+                    
+                    <!-- Split Path -->
+                    <div class="flex justify-center w-full space-x-16 mt-2">
+                        <!-- Left Branch: Helper -->
+                        <div class="flex flex-col items-center">
+                            <div class="h-8 border-l-2 border-dashed border-gray-400"></div>
+                            <div class="bg-violet-100 border-2 border-violet-500 text-violet-900 px-6 py-3 rounded shadow mt-2 text-center">
+                                <span class="font-bold block text-sm mb-1">Platform Helper</span>
+                                <span class="text-xs">Swift (macOS) / Bash (Linux)</span>
+                            </div>
+                            <div class="connector-vertical h-4"></div>
+                            <div class="connector-arrow-down"></div>
+                            <div class="bg-violet-600 text-white px-6 py-3 rounded shadow mt-2">
+                                Hardware (SE / TPM)
+                            </div>
+                        </div>
+
+                        <!-- Right Branch: 1Password -->
+                        <div class="flex flex-col items-center">
+                            <div class="h-8 border-l-2 border-dashed border-gray-400"></div>
+                            <div class="bg-cyan-100 border-2 border-cyan-500 text-cyan-900 px-6 py-3 rounded shadow mt-2">
+                                1Password CLI
+                            </div>
+                            <div class="connector-vertical h-4"></div>
+                            <div class="connector-arrow-down"></div>
+                            <div class="bg-cyan-600 text-white px-6 py-3 rounded shadow mt-2">
+                                1Password Vault
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="mt-6 text-center text-sm text-gray-500 italic">
+                    Secrets flow strictly via Stdin/Stdout pipes. K_org never touches disk.
+                </div>
+            </div>
+        </section>
+
+        <!-- Section 3: Authentication Policies (Chart) -->
+        <section id="security" class="grid grid-cols-1 md:grid-cols-2 gap-8">
+            <div class="bg-white rounded-xl shadow-md p-6">
+                <h3 class="text-xl font-bold text-gray-800 mb-4">Authentication Policy Balance</h3>
+                <p class="text-sm text-gray-600 mb-4">
+                    Kage balances security friction against protection needs. "Strong" policies bind keys to specific biometric identities or PCR states, preventing unauthorized usage even with shell access.
+                </p>
+                <div class="chart-container">
+                    <canvas id="authPolicyChart"></canvas>
+                </div>
+            </div>
+
+            <div class="bg-white rounded-xl shadow-md p-6">
+                <h3 class="text-xl font-bold text-gray-800 mb-4">Threat Model Coverage</h3>
+                <p class="text-sm text-gray-600 mb-4">
+                    Visualizing the defensive capabilities. Kage excels at physical defense and reducing key sprawl but does not protect against full kernel compromise.
+                </p>
+                <div class="chart-container">
+                    <canvas id="threatModelChart"></canvas>
+                </div>
+            </div>
+        </section>
+
+        <!-- Section 4: Key Hierarchy -->
+        <section id="hierarchy">
+            <h2 class="text-2xl font-bold text-blue-900 mb-4 border-b-4 border-violet-500 inline-block pb-1">Key Derivation Hierarchy</h2>
+            <p class="mb-6 text-gray-700">
+                The derivation process ensures that compromising a device key only exposes that specific environment's secret, not the organization master key.
+            </p>
+
+            <div class="bg-white rounded-xl shadow-md p-8">
+                <div class="flex flex-col md:flex-row justify-between items-center space-y-8 md:space-y-0 md:space-x-4">
+                    
+                    <!-- Step 1 -->
+                    <div class="flex-1 flex flex-col items-center">
+                        <div class="text-4xl mb-2">🔐</div>
+                        <div class="bg-blue-100 border border-blue-300 p-4 rounded-lg w-full text-center">
+                            <h4 class="font-bold text-blue-800">K_org</h4>
+                            <p class="text-xs text-gray-600 mt-1">Master Key (32B)</p>
+                            <p class="text-xs text-gray-500 font-mono mt-1">Stored in 1Password</p>
+                        </div>
+                    </div>
+
+                    <!-- Arrow -->
+                    <div class="hidden md:block text-2xl text-gray-400">➔</div>
+                    <div class="md:hidden text-2xl text-gray-400">⬇</div>
+
+                    <!-- Step 2 -->
+                    <div class="flex-1 flex flex-col items-center">
+                        <div class="text-xs font-mono bg-gray-200 px-2 py-1 rounded mb-2">HKDF-SHA256</div>
+                        <div class="bg-violet-100 border border-violet-300 p-4 rounded-lg w-full text-center">
+                            <h4 class="font-bold text-violet-800">K_env</h4>
+                            <p class="text-xs text-gray-600 mt-1">Env Key (32B)</p>
+                            <p class="text-xs text-gray-500 font-mono mt-1">Hardware Wrapped</p>
+                        </div>
+                    </div>
+
+                    <!-- Arrow -->
+                    <div class="hidden md:block text-2xl text-gray-400">➔</div>
+                    <div class="md:hidden text-2xl text-gray-400">⬇</div>
+
+                    <!-- Step 3 -->
+                    <div class="flex-1 flex flex-col items-center">
+                        <div class="text-xs font-mono bg-gray-200 px-2 py-1 rounded mb-2">Bech32 Encoding</div>
+                        <div class="bg-green-100 border border-green-300 p-4 rounded-lg w-full text-center">
+                            <h4 class="font-bold text-green-800">Age Identity</h4>
+                            <p class="text-xs text-gray-600 mt-1">X25519 Secret</p>
+                            <p class="text-xs text-gray-500 font-mono mt-1">Ephemeral Memory</p>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+        </section>
+
+        <!-- Section 5: Data Layout & CLI -->
+        <section class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            <!-- Data Layout -->
+            <div class="bg-white rounded-xl shadow-md p-6">
+                <h3 class="text-xl font-bold text-gray-800 mb-4">Directory Structure</h3>
+                <p class="text-sm text-gray-600 mb-4">
+                    Strict separation of configuration and sensitive data.
+                </p>
+                <div class="bg-gray-900 text-gray-300 p-4 rounded-lg font-mono text-sm overflow-x-auto">
+                    <ul class="list-none space-y-1">
+                        <li><span class="text-blue-400">~/.local/share/kage/</span></li>
+                        <li class="pl-4">├── <span class="text-yellow-400">config.toml</span> <span class="text-gray-500 text-xs">// Config</span></li>
+                        <li class="pl-4">├── <span class="text-green-400">wrapped/</span> <span class="text-gray-500 text-xs">// Data</span></li>
+                        <li class="pl-8">│   └── {org_id}/</li>
+                        <li class="pl-12">│       └── {env}/</li>
+                        <li class="pl-16">│           └── {device_id}.bin</li>
+                        <li class="pl-4">└── <span class="text-green-400">logs/</span></li>
+                        <li class="pl-8">    └── audit.log</li>
+                    </ul>
+                </div>
+            </div>
+
+            <!-- CLI Commands -->
+            <div class="bg-white rounded-xl shadow-md p-6">
+                <h3 class="text-xl font-bold text-gray-800 mb-4">Core Commands</h3>
+                <p class="text-sm text-gray-600 mb-4">
+                    The primary interface for initialization and SOPS integration.
+                </p>
+                <div class="space-y-4">
+                    <div>
+                        <div class="text-xs font-bold text-gray-500 uppercase mb-1">Initialization</div>
+                        <code class="block bg-gray-100 text-blue-800 p-2 rounded text-xs font-mono">
+                            kage init --org-id myorg --env prod --1p-vault DevOps
+                        </code>
+                    </div>
+                    <div>
+                        <div class="text-xs font-bold text-gray-500 uppercase mb-1">SOPS Integration</div>
+                        <code class="block bg-gray-100 text-violet-800 p-2 rounded text-xs font-mono">
+                            export AGE_IDENTITIES_COMMAND="kage age-identities --env=prod"
+                        </code>
+                    </div>
+                    <div>
+                        <div class="text-xs font-bold text-gray-500 uppercase mb-1">Recovery</div>
+                        <code class="block bg-gray-100 text-red-800 p-2 rounded text-xs font-mono">
+                            kage rotate-device-key --env prod
+                        </code>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- Footer -->
+    <footer class="bg-gray-800 text-gray-400 py-6 mt-12">
+        <div class="container mx-auto px-4 text-center text-sm">
+            <p>&copy; 2025 Kage Project. Implementation Specification v1.0.</p>
+        </div>
+    </footer>
+
+    <script>
+        // -------------------------------------------------------
+        // Label Wrapping Logic (16 char limit)
+        // -------------------------------------------------------
+        function formatLabel(str, maxLen = 16) {
+            if (str.length <= maxLen) return str;
+            const words = str.split(' ');
+            const lines = [];
+            let currentLine = words[0];
+
+            for (let i = 1; i < words.length; i++) {
+                if ((currentLine + " " + words[i]).length <= maxLen) {
+                    currentLine += " " + words[i];
+                } else {
+                    lines.push(currentLine);
+                    currentLine = words[i];
+                }
+            }
+            lines.push(currentLine);
+            return lines;
+        }
+
+        // -------------------------------------------------------
+        // Common Tooltip Config (Required)
+        // -------------------------------------------------------
+        const commonTooltipPlugin = {
+            tooltip: {
+                callbacks: {
+                    title: function(tooltipItems) {
+                        const item = tooltipItems[0];
+                        let label = item.chart.data.labels[item.dataIndex];
+                        if (Array.isArray(label)) {
+                            return label.join(' ');
+                        } else {
+                            return label;
+                        }
+                    }
+                }
+            }
+        };
+
+        // -------------------------------------------------------
+        // Chart 1: Auth Policy Levels (Bar Chart)
+        // Goal: Compare "Friction" vs "Security"
+        // -------------------------------------------------------
+        const ctxAuth = document.getElementById('authPolicyChart').getContext('2d');
+        const authDataLabels = ['None', 'Presence', 'Strong'].map(l => formatLabel(l));
+        
+        new Chart(ctxAuth, {
+            type: 'bar',
+            data: {
+                labels: authDataLabels,
+                datasets: [
+                    {
+                        label: 'Security Strength',
+                        data: [2, 6, 10], // Arbitrary score based on spec
+                        backgroundColor: '#1e40af', // Blue 800
+                        borderRadius: 4
+                    },
+                    {
+                        label: 'User Friction',
+                        data: [1, 5, 8], // Arbitrary score
+                        backgroundColor: '#7c3aed', // Violet 600
+                        borderRadius: 4
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        max: 10,
+                        title: { display: true, text: 'Score (1-10)' }
+                    }
+                },
+                plugins: {
+                    ...commonTooltipPlugin,
+                    legend: { position: 'top' }
+                }
+            }
+        });
+
+        // -------------------------------------------------------
+        // Chart 2: Threat Model (Radar Chart)
+        // Goal: Compare defensive capabilities
+        // -------------------------------------------------------
+        const ctxThreat = document.getElementById('threatModelChart').getContext('2d');
+        
+        // Data derived from "Threat Model" section
+        const threatLabels = [
+            'Disk Theft Protection', 
+            'Key Sprawl Reduction', 
+            'Unauthorized Decryption', 
+            'Accidental Logging', 
+            'Rootkit Defense', 
+            'Zero-Day Defense'
+        ].map(l => formatLabel(l));
+
+        new Chart(ctxThreat, {
+            type: 'radar',
+            data: {
+                labels: threatLabels,
+                datasets: [{
+                    label: 'Kage Coverage',
+                    data: [10, 10, 8, 10, 1, 0], // Scores based on "Defend Against" vs "Not Defend"
+                    fill: true,
+                    backgroundColor: 'rgba(6, 182, 212, 0.2)', // Cyan transparent
+                    borderColor: '#06b6d4', // Cyan 500
+                    pointBackgroundColor: '#06b6d4',
+                    pointBorderColor: '#fff',
+                    pointHoverBackgroundColor: '#fff',
+                    pointHoverBorderColor: '#06b6d4'
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                elements: {
+                    line: { borderWidth: 3 }
+                },
+                scales: {
+                    r: {
+                        angleLines: { display: false },
+                        suggestedMin: 0,
+                        suggestedMax: 10,
+                        ticks: { display: false } // Hide numbers for cleaner look
+                    }
+                },
+                plugins: {
+                    ...commonTooltipPlugin,
+                    legend: { display: false }
+                }
+            }
+        });
+
+    </script>
+    <!-- NO SVG or Mermaid used. Pure HTML/CSS and Chart.js Canvas -->
+</body>
+</html>
