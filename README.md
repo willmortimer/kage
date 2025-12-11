@@ -22,20 +22,26 @@ mise install
 ```bash
 just build
 ```
-This builds the Rust CLI (`kage-cli`) and the macOS Helper App (`KageHelper.app`).
+This builds the Rust CLI (`kage`, alias `kage-cli`) and the macOS Helper App (`KageHelper.app`).
 
 ## Usage
+
+### 0. CLI name
+The release binary is available as `./target/release/kage` (alias `kage-cli`).
+```bash
+./target/release/kage --help
+```
 
 ### 1. Initialization
 Initialize an organization and enroll the current device. This fetches the master key from 1Password and derives per-environment keys.
 
 ```bash
 # Standard Init (Production/Staging - Requires properly signed binary)
-./target/release/kage-cli init --org-id my-org --env dev --1p-vault "Private"
+./target/release/kage init --org-id my-org --env dev --1p-vault "Private"
 
 # Local Dev Mode (Recommended for testing)
 export KAGE_LOCAL_DEV=1
-./target/release/kage-cli init --org-id my-org --env dev --1p-vault "Private" --non-interactive
+./target/release/kage init --org-id my-org --env dev --1p-vault "Private" --non-interactive
 ```
 
 ### 2. Get Age Identity
@@ -43,17 +49,33 @@ Output the age secret key for use with SOPS.
 
 ```bash
 # Set up for SOPS
-export SOPS_AGE_KEY=$(./target/release/kage-cli age-identities --env dev)
+export SOPS_AGE_KEY=$(./target/release/kage age-identities --env dev)
 
 # Or use command mode (SOPS calls Kage)
-export AGE_IDENTITIES_COMMAND="./target/release/kage-cli age-identities --env dev"
+export AGE_IDENTITIES_COMMAND="./target/release/kage age-identities --env dev"
 ```
 
 ### 3. Rotate Keys
 If a device is compromised or biometry changes (invalidating the key), rotate the device key.
 
 ```bash
-./target/release/kage-cli rotate-device-key --env dev
+./target/release/kage rotate-device-key --env dev
+```
+
+### 4. Self-Test (CLI)
+Run an encrypt/decrypt roundtrip for an environment using the configured policy/label.
+```bash
+./target/release/kage self-test --env dev
+```
+
+### 5. SOPS Helpers
+Decrypt or encrypt with SOPS using the device key for an environment (does not touch system SOPS config).
+```bash
+# Decrypt to stdout (or use --output)
+./target/release/kage sops-decrypt --env dev --file secrets.sops.yaml
+
+# Encrypt a plaintext file; derives recipient from the device key if not provided
+./target/release/kage sops-encrypt --env dev --file plaintext.yaml --output secrets.sops.yaml
 ```
 
 ## Modes of Operation (macOS)

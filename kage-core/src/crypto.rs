@@ -1,13 +1,14 @@
+use crate::error::Result;
+use bech32::{self, ToBase32, Variant};
 use hkdf::Hkdf;
 use sha2::Sha256;
-use bech32::{self, ToBase32, Variant};
-use crate::error::{Result};
 
 pub fn derive_k_env(k_org: &[u8], env: &str) -> [u8; 32] {
     let hk = Hkdf::<Sha256>::new(None, k_org);
     let info = format!("kage-env-derivation-v1:{}", env);
     let mut okm = [0u8; 32];
-    hk.expand(info.as_bytes(), &mut okm).expect("HKDF expand failed");
+    hk.expand(info.as_bytes(), &mut okm)
+        .expect("HKDF expand failed");
     okm
 }
 
@@ -30,4 +31,3 @@ mod tests {
         assert_eq!(output, expected);
     }
 }
-

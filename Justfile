@@ -25,6 +25,10 @@ build:
         just build-mac-helper; \
     fi
 
+# Run the CLI (release)
+kage +args: build
+    ./target/release/kage {{args}}
+
 # Validate Bech32 and HKDF
 test-crypto:
     cargo test -p kage-core
@@ -74,12 +78,21 @@ test-integration vault_arg="Private": build
 
 # Dev Mode helpers
 dev-cli +args: build
-    KAGE_LOCAL_DEV=1 ./target/release/kage-cli {{args}}
+    KAGE_LOCAL_DEV=1 ./target/release/kage {{args}}
 
 dev-init env="dev" vault="Private": build
-    KAGE_LOCAL_DEV=1 ./target/release/kage-cli init --org-id my-company --env {{env}} --1p-vault "{{vault}}" --non-interactive
+    KAGE_LOCAL_DEV=1 ./target/release/kage init --org-id my-company --env {{env}} --1p-vault "{{vault}}" --non-interactive
 
 # Restart KageHelper app
 restart:
-    pkill KageHelper && open target/release/KageHelper.app
+    pkill KageHelper || true
+    open target/release/KageHelper.app
+
+# Rust formatting
+fmt:
+    cargo fmt
+
+# Rust tests (all)
+test-rust:
+    cargo test
 

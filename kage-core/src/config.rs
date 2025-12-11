@@ -53,4 +53,3 @@ pub struct OrgConfig {
 pub struct PolicyConfig {
     pub mapping: HashMap<String, String>,
 }
-

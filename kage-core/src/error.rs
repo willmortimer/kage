@@ -19,4 +19,3 @@ pub enum KageError {
 }
 
 pub type Result<T> = std::result::Result<T, KageError>;
-

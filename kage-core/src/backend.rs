@@ -1,7 +1,7 @@
-use std::process::Command;
-use crate::error::{Result, KageError};
-use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+use crate::error::{KageError, Result};
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use rand::RngCore;
+use std::process::Command;
 
 pub struct OnePasswordBackend;
 
@@ -20,20 +20,30 @@ impl OnePasswordBackend {
         if output.status.success() {
             let encoded = String::from_utf8(output.stdout)
                 .map_err(|e| KageError::OnePassword(format!("Invalid UTF-8: {}", e)))?;
-            let decoded = BASE64.decode(encoded.trim())
+            let decoded = BASE64
+                .decode(encoded.trim())
                 .map_err(|e| KageError::OnePassword(format!("Invalid Base64: {}", e)))?;
             Ok(decoded)
         } else {
             let stderr = String::from_utf8_lossy(&output.stderr);
             if stderr.contains("not signed in") || stderr.contains("session expired") {
-                Err(KageError::OnePassword("Not signed in to 1Password".to_string()))
-            } else if stderr.contains("item not found") || output.status.code() == Some(1) { // op read returns 1 on not found usually
-                 // For fetch, not found is an error unless we are doing check-then-create logic.
-                 // The caller handles logic. Here we just return specific error string to be parsed or custom error type.
-                 // For now, let's return a specific error that can be matched if needed, or just text.
-                 Err(KageError::OnePassword(format!("Item not found: {}", stderr)))
+                Err(KageError::OnePassword(
+                    "Not signed in to 1Password".to_string(),
+                ))
+            } else if stderr.contains("item not found") || output.status.code() == Some(1) {
+                // op read returns 1 on not found usually
+                // For fetch, not found is an error unless we are doing check-then-create logic.
+                // The caller handles logic. Here we just return specific error string to be parsed or custom error type.
+                // For now, let's return a specific error that can be matched if needed, or just text.
+                Err(KageError::OnePassword(format!(
+                    "Item not found: {}",
+                    stderr
+                )))
             } else {
-                Err(KageError::OnePassword(format!("op read failed: {}", stderr)))
+                Err(KageError::OnePassword(format!(
+                    "op read failed: {}",
+                    stderr
+                )))
             }
         }
     }
@@ -41,13 +51,13 @@ impl OnePasswordBackend {
     pub fn ensure_k_org(&self, vault: &str, item_id: Option<&str>) -> Result<(String, Vec<u8>)> {
         // If item_id exists, try to fetch
         if let Some(id) = item_id {
-             match self.fetch_k_org(vault, id) {
-                 Ok(key) => return Ok((id.to_string(), key)),
-                 Err(KageError::OnePassword(msg)) if msg.contains("Item not found") => {
-                     // Fall through to create
-                 },
-                 Err(e) => return Err(e),
-             }
+            match self.fetch_k_org(vault, id) {
+                Ok(key) => return Ok((id.to_string(), key)),
+                Err(KageError::OnePassword(msg)) if msg.contains("Item not found") => {
+                    // Fall through to create
+                }
+                Err(e) => return Err(e),
+            }
         }
 
         // Generate new key
@@ -69,7 +79,10 @@ impl OnePasswordBackend {
             .map_err(|e| KageError::OnePassword(format!("Failed to execute op create: {}", e)))?;
 
         if !output.status.success() {
-             return Err(KageError::OnePassword(format!("Failed to create item: {}", String::from_utf8_lossy(&output.stderr))));
+            return Err(KageError::OnePassword(format!(
+                "Failed to create item: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )));
         }
 
         // Parse JSON output to get ID
@@ -83,4 +96,3 @@ impl OnePasswordBackend {
         Ok((item.id, key.to_vec()))
     }
 }
-

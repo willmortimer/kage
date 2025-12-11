@@ -1,9 +1,9 @@
+use kage_core::error::{KageError, Result};
+use kage_core::keystore::DeviceKeystore;
+use serde::{Deserialize, Serialize};
+use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use std::io::{Write, Read};
-use kage_core::keystore::DeviceKeystore;
-use kage_core::error::{Result, KageError};
-use serde::{Deserialize, Serialize};
 
 #[derive(Serialize)]
 struct AgentRequest<'a> {
@@ -55,17 +55,12 @@ fn agent_available() -> bool {
 }
 
 #[cfg(unix)]
-fn call_agent(
-    cmd: &str,
-    label: &str,
-    policy: &str,
-    input: Option<&[u8]>,
-) -> Result<AgentResponse> {
+fn call_agent(cmd: &str, label: &str, policy: &str, input: Option<&[u8]>) -> Result<AgentResponse> {
+    use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
     use std::os::unix::net::UnixStream;
-    use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 
-    let sock_path = agent_socket_path()
-        .ok_or_else(|| KageError::Keystore("HOME not set".into()))?;
+    let sock_path =
+        agent_socket_path().ok_or_else(|| KageError::Keystore("HOME not set".into()))?;
 
     let mut stream = UnixStream::connect(&sock_path)
         .map_err(|e| KageError::Keystore(format!("Agent connect failed: {e}")))?;
@@ -117,34 +112,44 @@ pub struct HelperKeystore {
 impl HelperKeystore {
     pub fn new() -> Result<Self> {
         let exe_path = std::env::current_exe()?;
-        let exe_dir = exe_path.parent().ok_or(KageError::Keystore("Cannot find exe dir".into()))?;
-        
+        let exe_dir = exe_path
+            .parent()
+            .ok_or(KageError::Keystore("Cannot find exe dir".into()))?;
+
         #[cfg(target_os = "macos")]
         {
             // Try App Bundle path first
             // Xcode target "KageHelper" produces binary "KageHelper" inside the bundle
             let app_path = exe_dir.join("KageHelper.app/Contents/MacOS/KageHelper");
             if app_path.exists() {
-                return Ok(Self { helper_path: app_path });
+                return Ok(Self {
+                    helper_path: app_path,
+                });
             }
-            
+
             // Fallback to side-by-side binary (old way)
             let raw_path = exe_dir.join("kage-mac-helper");
             if raw_path.exists() {
-                return Ok(Self { helper_path: raw_path });
+                return Ok(Self {
+                    helper_path: raw_path,
+                });
             }
         }
-        
+
         #[cfg(target_os = "linux")]
         {
-             let path = exe_dir.join("kage-linux-helper");
-             if path.exists() {
-                 return Ok(Self { helper_path: path });
-             }
+            let path = exe_dir.join("kage-linux-helper");
+            if path.exists() {
+                return Ok(Self { helper_path: path });
+            }
         }
-        
+
         // Try looking in PATH
-        let lookup_name = if cfg!(target_os = "macos") { "kage-mac-helper" } else { "kage-linux-helper" };
+        let lookup_name = if cfg!(target_os = "macos") {
+            "kage-mac-helper"
+        } else {
+            "kage-linux-helper"
+        };
         if let Ok(path) = which::which(lookup_name) {
             return Ok(Self { helper_path: path });
         }
@@ -154,26 +159,27 @@ impl HelperKeystore {
 
     fn ensure_key_via_subprocess(&self, label: &str, policy: &str) -> Result<()> {
         let mut cmd = Command::new(&self.helper_path);
-        cmd.arg("init-key")
-            .arg(label)
-            .arg("--policy")
-            .arg(policy);
-            
+        cmd.arg("init-key").arg(label).arg("--policy").arg(policy);
+
         // Propagate KAGE_LOCAL_DEV env var if set
         if let Ok(val) = std::env::var("KAGE_LOCAL_DEV") {
             cmd.env("KAGE_LOCAL_DEV", val);
         }
 
-        let status = cmd.status()
+        let status = cmd
+            .status()
             .map_err(|e| KageError::Keystore(format!("Failed to run helper: {}", e)))?;
 
         if status.success() {
             Ok(())
         } else {
-            Err(KageError::Keystore(format!("Helper init-key failed with {:?}", status.code())))
+            Err(KageError::Keystore(format!(
+                "Helper init-key failed with {:?}",
+                status.code()
+            )))
         }
     }
-    
+
     fn wrap_via_subprocess(&self, plaintext: &[u8], label: &str, policy: &str) -> Result<Vec<u8>> {
         let mut cmd = Command::new(&self.helper_path);
         cmd.arg("encrypt")
@@ -182,28 +188,37 @@ impl HelperKeystore {
             .arg(policy)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped());
-            
+
         if let Ok(val) = std::env::var("KAGE_LOCAL_DEV") {
             cmd.env("KAGE_LOCAL_DEV", val);
         }
 
-        let mut child = cmd.spawn()
+        let mut child = cmd
+            .spawn()
             .map_err(|e| KageError::Keystore(format!("Failed to spawn helper: {}", e)))?;
-            
+
         if let Some(mut stdin) = child.stdin.take() {
             stdin.write_all(plaintext)?;
         }
-        
+
         let output = child.wait_with_output()?;
-        
+
         if output.status.success() {
             Ok(output.stdout)
         } else {
-            Err(KageError::Keystore(format!("Helper encrypt failed: {}", String::from_utf8_lossy(&output.stderr))))
+            Err(KageError::Keystore(format!(
+                "Helper encrypt failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )))
         }
     }
-    
-    fn unwrap_via_subprocess(&self, ciphertext: &[u8], label: &str, policy: &str) -> Result<Vec<u8>> {
+
+    fn unwrap_via_subprocess(
+        &self,
+        ciphertext: &[u8],
+        label: &str,
+        policy: &str,
+    ) -> Result<Vec<u8>> {
         let mut cmd = Command::new(&self.helper_path);
         cmd.arg("decrypt")
             .arg(label)
@@ -211,29 +226,33 @@ impl HelperKeystore {
             .arg(policy)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped());
-            
+
         if let Ok(val) = std::env::var("KAGE_LOCAL_DEV") {
             cmd.env("KAGE_LOCAL_DEV", val);
         }
 
-        let mut child = cmd.spawn()
+        let mut child = cmd
+            .spawn()
             .map_err(|e| KageError::Keystore(format!("Failed to spawn helper: {}", e)))?;
-            
+
         if let Some(mut stdin) = child.stdin.take() {
             stdin.write_all(ciphertext)?;
         }
-        
+
         let output = child.wait_with_output()?;
-        
+
         if output.status.success() {
             Ok(output.stdout)
         } else {
-             // Map exit codes
-             match output.status.code() {
-                 Some(2) => Err(KageError::Keystore("Auth Failed".into())),
-                 Some(3) => Err(KageError::Keystore("Auth Not Enrolled".into())),
-                 _ => Err(KageError::Keystore(format!("Helper decrypt failed: {}", String::from_utf8_lossy(&output.stderr)))),
-             }
+            // Map exit codes
+            match output.status.code() {
+                Some(2) => Err(KageError::Keystore("Auth Failed".into())),
+                Some(3) => Err(KageError::Keystore("Auth Not Enrolled".into())),
+                _ => Err(KageError::Keystore(format!(
+                    "Helper decrypt failed: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                ))),
+            }
         }
     }
 }
@@ -258,11 +277,11 @@ impl DeviceKeystore for HelperKeystore {
         }
         self.ensure_key_via_subprocess(label, policy)
     }
-    
+
     fn wrap(&self, plaintext: &[u8], label: &str, policy: &str) -> Result<Vec<u8>> {
         #[cfg(unix)]
         if agent_available() {
-            use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+            use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
             match call_agent("encrypt", label, policy, Some(plaintext)) {
                 Ok(resp) if resp.ok => {
                     let b64 = resp.data.ok_or_else(|| {
@@ -279,16 +298,16 @@ impl DeviceKeystore for HelperKeystore {
                     ));
                 }
                 Err(e) if agent_enabled() => return Err(e),
-                Err(_) => { }
+                Err(_) => {}
             }
         }
         self.wrap_via_subprocess(plaintext, label, policy)
     }
-    
+
     fn unwrap(&self, ciphertext: &[u8], label: &str, policy: &str) -> Result<Vec<u8>> {
         #[cfg(unix)]
         if agent_available() {
-            use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+            use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
             match call_agent("decrypt", label, policy, Some(ciphertext)) {
                 Ok(resp) if resp.ok => {
                     let b64 = resp.data.ok_or_else(|| {
@@ -302,12 +321,12 @@ impl DeviceKeystore for HelperKeystore {
                 Ok(resp) => {
                     let err_msg = resp.error.unwrap_or_else(|| "Agent decrypt failed".into());
                     if err_msg.contains("AuthFailed") || err_msg.contains("authFailed") {
-                         return Err(KageError::Keystore("Auth Failed".into()));
+                        return Err(KageError::Keystore("Auth Failed".into()));
                     }
                     return Err(KageError::Keystore(err_msg));
                 }
                 Err(e) if agent_enabled() => return Err(e),
-                Err(_) => { }
+                Err(_) => {}
             }
         }
         self.unwrap_via_subprocess(ciphertext, label, policy)
@@ -323,13 +342,18 @@ impl DeviceKeystore for HelperKeystore {
         if status.success() {
             Ok(())
         } else {
-            Err(KageError::Keystore(format!("Helper delete-key failed with {:?}", status.code())))
+            Err(KageError::Keystore(format!(
+                "Helper delete-key failed with {:?}",
+                status.code()
+            )))
         }
     }
 
     fn is_available(&self) -> bool {
-        if agent_available() { return true; }
-        
+        if agent_available() {
+            return true;
+        }
+
         Command::new(&self.helper_path)
             .arg("check")
             .status()
