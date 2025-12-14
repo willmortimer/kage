@@ -12,7 +12,7 @@ build-mac-helper:
       -scheme KageHelper \
       -configuration Release \
       -derivedDataPath .xcodebuild \
-      MACOSX_DEPLOYMENT_TARGET=13.0
+      MACOSX_DEPLOYMENT_TARGET=15.0
     rm -rf target/release/KageHelper.app
     # Remove stale side-by-side binary to ensure CLI uses the bundle
     rm -f target/release/kage-mac-helper
