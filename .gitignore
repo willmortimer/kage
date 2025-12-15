@@ -22,3 +22,10 @@ secrets.sops.yaml
 # Xcode build artifacts
 kage-mac-helper/.xcodebuild/
 
+# mise task no-op outputs
+.mise-cache/
+
+# Local-only environment overrides (codesigning/dev secrets)
+.env
+.env.local
+.env.*.local
