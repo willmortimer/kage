@@ -1,0 +1,29 @@
+[package]
+name = "kage-cli"
+version = "3.0.0-alpha.1"
+edition = "2021"
+
+[[bin]]
+name = "kage"
+path = "src/main.rs"
+
+[dependencies]
+chrono = "0.4"
+clap = { version = "4.4", features = ["derive"] }
+anyhow = "1.0"
+dirs = "5.0"
+hex = "0.4"
+toml = "0.8"
+serde_json = "1.0"
+which = "6.0"
+base64 = "0.22"
+kage-comm = { path = "../kage-comm" }
+kage-types = { path = "../kage-types" }
+rand = "0.8"
+serde = { version = "1.0", features = ["derive"] }
+sha2 = "0.10"
+tempfile = "3.23"
+tokio = { version = "1.38", features = ["rt-multi-thread", "macros", "time", "io-util"] }
+
+[dev-dependencies]
+tempfile = "3.23"

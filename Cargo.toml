@@ -4,5 +4,7 @@ members = [
     "crates/kage-audit",
     "crates/kage-comm",
     "crates/kaged",
+    "crates/kage-cli",
+    "crates/age-plugin-kage",
 ]
 resolver = "2"
