@@ -8,20 +8,28 @@ age = "latest"
 
 [tasks.build-rust]
 description = "Build Rust components"
-run = "cargo build --release -p kage-cli -p kaged -p age-plugin-kage"
+run = "cargo build --release -p kage-cli -p kaged -p age-plugin-kage -p kage-git-signer -p kage-wsl-bridge"
 sources = [
   "Cargo.toml",
   "Cargo.lock",
-  "age-plugin-kage/Cargo.toml",
-  "age-plugin-kage/src/**/*.rs",
-  "kage-cli/Cargo.toml",
-  "kage-cli/src/**/*.rs",
-  "kage-comm/Cargo.toml",
-  "kage-comm/src/**/*.rs",
-  "kaged/Cargo.toml",
-  "kaged/src/**/*.rs",
+  "crates/age-plugin-kage/Cargo.toml",
+  "crates/age-plugin-kage/src/**/*.rs",
+  "crates/kage-cli/Cargo.toml",
+  "crates/kage-cli/src/**/*.rs",
+  "crates/kage-comm/Cargo.toml",
+  "crates/kage-comm/src/**/*.rs",
+  "crates/kage-types/Cargo.toml",
+  "crates/kage-types/src/**/*.rs",
+  "crates/kage-audit/Cargo.toml",
+  "crates/kage-audit/src/**/*.rs",
+  "crates/kaged/Cargo.toml",
+  "crates/kaged/src/**/*.rs",
+  "crates/kage-git-signer/Cargo.toml",
+  "crates/kage-git-signer/src/**/*.rs",
+  "crates/kage-wsl-bridge/Cargo.toml",
+  "crates/kage-wsl-bridge/src/**/*.rs",
 ]
-outputs = ["target/release/kage", "target/release/kaged", "target/release/age-plugin-kage"]
+outputs = ["target/release/kage", "target/release/kaged", "target/release/age-plugin-kage", "target/release/kage-git-signer", "target/release/kage-wsl-bridge"]
 
 [tasks.lint]
 description = "Rust clippy"
@@ -67,7 +75,7 @@ description = "Build macOS helper (Xcode)"
 depends = ["build-rust"]
 run = "scripts/mise/build-mac.sh"
 env.KAGE_MAC_BUILD_VARIANT = "signed"
-sources = ["kage-mac-helper/KageHelper/**/*.swift", "kage-mac-helper/KageHelper/**/*.plist", "kage-mac-helper/KageHelper/**/*.pbxproj", "kage-comm/**/*.rs", "kage-comm/objc/*.m", "scripts/mise/build-mac.sh"]
+sources = ["kage-mac-helper/KageHelper/**/*.swift", "kage-mac-helper/KageHelper/**/*.plist", "kage-mac-helper/KageHelper/**/*.pbxproj", "crates/kage-comm/**/*.rs", "crates/kage-comm/objc/*.m", "scripts/mise/build-mac.sh"]
 outputs = ["target/release/KageHelper.app/Contents/MacOS/KageHelper", ".mise-cache/build-mac.noop", ".mise-cache/build-mac.signed"]
 
 [tasks.build-mac-unsigned]
@@ -78,7 +86,7 @@ alias = ["mac-unsigned"]
 env.KAGE_CODESIGN = "0"
 run = "scripts/mise/build-mac.sh"
 env.KAGE_MAC_BUILD_VARIANT = "unsigned"
-sources = ["kage-mac-helper/KageHelper/**/*.swift", "kage-mac-helper/KageHelper/**/*.plist", "kage-mac-helper/KageHelper/**/*.pbxproj", "kage-comm/**/*.rs", "kage-comm/objc/*.m", "scripts/mise/build-mac.sh"]
+sources = ["kage-mac-helper/KageHelper/**/*.swift", "kage-mac-helper/KageHelper/**/*.plist", "kage-mac-helper/KageHelper/**/*.pbxproj", "crates/kage-comm/**/*.rs", "crates/kage-comm/objc/*.m", "scripts/mise/build-mac.sh"]
 outputs = ["target/release/KageHelper.app/Contents/MacOS/KageHelper", ".mise-cache/build-mac.noop", ".mise-cache/build-mac.unsigned"]
 
 [tasks.codesign-rust]
