@@ -1,121 +1,101 @@
 # Kage
 
-**Hardware-backed key management shim for `age`/`SOPS`.**
+**Hardware-backed age plugin for teams (v2 in progress).**
 
-Kage bridges the gap between developer secret management (SOPS) and hardware security modules (Secure Enclave on macOS, TPM2 on Linux). It ensures that environment keys (`K_env`) are never stored in plaintext on disk, but are instead wrapped by hardware-protected keys.
+Kage v2 is a native `age` plugin with a daemon that unwraps environment keys using platform hardware (Secure Enclave on macOS, TPM2 on Linux) and wraps age file keys using XChaCha20-Poly1305.
 
 ## Documentation
 
-*   [**Design Specification**](docs/DESIGN_SPEC.md): The original requirements and design goals.
-*   [**Architecture & Implementation**](docs/ARCHITECTURE.md): Current system architecture, including the macOS Agent and IPC details.
+*   [**v2 Design Spec**](docs/v2/DESIGN_SPEC_V2.md)
+*   [**v2 Implementation Guide**](docs/v2/IMPLEMENTATION_GUIDE.md)
+*   [**v2 IPC Protocol**](docs/v2/IPC_PROTOCOL.md)
+*   [**v2 Security & Crypto**](docs/v2/SECURITY_AND_CRYPTO.md)
+*   Legacy v1 docs remain under `docs/`.
+
+## Installation (Homebrew)
+
+macOS requirements: Apple silicon (arm64) + macOS 26+.
+
+```bash
+brew tap willmortimer/kage
+brew install kage
+brew install --cask kage-helper
+
+# SOPS integration:
+export SOPS_AGE_KEY_CMD="kage identity"
+```
 
 ## Development Setup
 
-This project uses `mise` to manage dependencies (Rust, Just, SOPS, Age).
+This project uses `mise` to manage dependencies (Rust, Just, SOPS, Age). Run everything via `mise` so you don’t depend on system/Homebrew versions.
 
 ```bash
+mise trust --all --yes
 mise install
 ```
 
 ### Building
 
 ```bash
-just build
+mise run build
 ```
-This builds the Rust CLI (`kage`, alias `kage-cli`) and the macOS Helper App (`KageHelper.app`).
+This builds:
+
+- `target/release/kage` (admin CLI)
+- `target/release/kaged` (daemon, Linux/macOS dev)
+- `target/release/age-plugin-kage` (age plugin)
+
+The `Justfile` remains as a compatibility wrapper (it calls the `mise` tasks).
 
 ## Usage
 
-### 0. CLI name
-The release binary is available as `./target/release/kage` (alias `kage-cli`).
-```bash
-./target/release/kage --help
-```
+The commands below assume `kage` is on your `PATH` (Homebrew install). When developing from source, use `./target/release/kage` instead.
 
-### 1. Initialization
-Initialize an organization and enroll the current device. This fetches the master key from 1Password and derives per-environment keys.
+### 1. Start the daemon
+macOS (XPC `com.kage.daemon`):
 
 ```bash
-# Standard Init (Production/Staging - Requires properly signed binary)
-./target/release/kage init --org-id my-org --env dev --1p-vault "Private"
-
-# Local Dev Mode (Recommended for testing)
-export KAGE_LOCAL_DEV=1
-./target/release/kage init --org-id my-org --env dev --1p-vault "Private" --non-interactive
+# Homebrew users: `brew install --cask kage-helper` installs + loads the LaunchAgent.
+# Source users: end-to-end smoke (installs app, starts LaunchAgent, runs sops roundtrip)
+mise run macos-smoke
 ```
 
-### 2. Get Age Identity
-Output the age secret key for use with SOPS.
+Linux (Unix socket `~/.kage/kaged.sock`):
 
 ```bash
-# Set up for SOPS
-export SOPS_AGE_KEY=$(./target/release/kage age-identities --env dev)
-
-# Or use command mode (SOPS calls Kage)
-export AGE_IDENTITIES_COMMAND="./target/release/kage age-identities --env dev"
+kaged
 ```
 
-### 3. Rotate Keys
-If a device is compromised or biometry changes (invalidating the key), rotate the device key.
+### 2. Enroll this machine
 
 ```bash
-./target/release/kage rotate-device-key --env dev
+kage setup --org my-org --env dev --env prod --1p-vault "Private"
 ```
 
-### 4. Self-Test (CLI)
-Run an encrypt/decrypt roundtrip for an environment using the configured policy/label.
+### 3. List recipients (for `.sops.yaml`)
+
 ```bash
-./target/release/kage self-test --env dev
+kage list
 ```
 
-### 5. SOPS Helpers
-Decrypt or encrypt with SOPS using the device key for an environment (does not touch system SOPS config).
+### 4. Use with SOPS/age
+
 ```bash
-# Decrypt to stdout (or use --output)
-./target/release/kage sops-decrypt --env dev --file secrets.sops.yaml
+# Source build only:
+# export PATH="$PWD/target/release:$PATH"
 
-# Encrypt a plaintext file; derives recipient from the device key if not provided
-./target/release/kage sops-encrypt --env dev --file plaintext.yaml --output secrets.sops.yaml
+# Tell sops how to get an age identity (kage prints plugin identity lines).
+export SOPS_AGE_KEY_CMD="kage identity"
+
+# Encrypt using a Kage recipient (from `kage list`)
+mise exec -- sops -e --age "age1kage1..." secrets.plain.yaml > secrets.yaml
+
+# Decrypt (plugin will call the daemon)
+mise exec -- sops -d secrets.yaml
 ```
-
-## Modes of Operation (macOS)
-
-### Local Dev Mode (`KAGE_LOCAL_DEV=1`)
-For local development, set `KAGE_LOCAL_DEV=1`. This downgrades security policies to allow headless CLI usage without blocking on Touch ID prompts.
-*   **Polices**: All environments use Secure Enclave keys with **No Access Control Lists (ACLs)**.
-*   **Agent**: Optional. Works with both subprocess and agent.
-
-### Agent Mode (`KAGE_USE_AGENT=1`)
-Kage can use a persistent background agent (`KageHelper.app`) for improved performance and session management.
-
-1.  **Start the Agent**:
-    *   **Production / Strict Mode**:
-        ```bash
-        open target/release/KageHelper.app
-        ```
-    *   **Local Dev Mode (No ACLs)**:
-        To run the Agent with `KAGE_LOCAL_DEV=1`, you must launch the binary directly (as `open` does not pass environment variables):
-        ```bash
-        pkill KageHelper
-        KAGE_LOCAL_DEV=1 ./target/release/KageHelper.app/Contents/MacOS/KageHelper &
-        ```
-
-2.  **Enable Agent in CLI**:
-    ```bash
-    export KAGE_USE_AGENT=1
-    ```
-
-3.  **Run Commands**:
-    ```bash
-    ./target/release/kage-cli age-identities --env dev
-    ```
-
-### Subprocess Mode (Default)
-If `KAGE_USE_AGENT` is not set, `kage-cli` spawns `KageHelper.app` as a one-shot subprocess. This is simpler but has higher latency and cannot handle complex UI interactions (like "Prod" biometry) as gracefully.
 
 ## Troubleshooting
 
-*   **`Invalid key length`**: Usually means the helper binary is printing debug info to stdout. Ensure you have the latest build (`just build`).
-*   **`Connection refused`**: The Agent is not running. Run `open target/release/KageHelper.app`.
-*   **`-34018` / `errSecMissingEntitlement`**: Code signing issue. Ensure the app is signed with a certificate that has a stable Team ID (or use `KAGE_LOCAL_DEV=1` to bypass strict ACLs).
-*   **`-1009` / `ACL operation is not allowed`**: This confirms that macOS is blocking strict access controls (Biometry/Passcode) for the local build. You **must** use `KAGE_LOCAL_DEV=1` to downgrade to a supported policy (No ACL).
+*   **SOPS says it can’t find plugin**: ensure `age-plugin-kage` is on `PATH` (see above).
+*   **Daemon unreachable (macOS)**: ensure `kage-helper` is running (`launchctl print gui/$(id -u)/com.kage.daemon`).
+*   **Daemon unreachable (Linux)**: start `kaged` and confirm the socket exists at `~/.kage/kaged.sock`.
