@@ -1,0 +1,11 @@
+[allowlist]
+description = "Known false positives: test fixtures and documentation test vectors"
+
+# signing_record.rs: base64 of literal "sealed-key" in unit test
+# crypto.rs: deterministic age secret key from all-0x42 test vector
+# DESIGN_SPEC.md: same test vector documented in v1 spec
+fingerprints = [
+  "a6c82525b3dc94708e2c746077228943c516b051:crates/kage-comm/src/signing_record.rs:generic-api-key:83",
+  "c82da76d3740315f8792f9e66865f70f193a2832:kage-core/src/crypto.rs:age-secret-key:28",
+  "ff3fcd1997afcab6c08808714afe910eed7e29dd:docs/DESIGN_SPEC.md:age-secret-key:90",
+]
