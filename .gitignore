@@ -16,8 +16,12 @@
 *.tmp
 *.log
 
+# Release artifacts
+/dist
+
 # Secrets
 secrets.sops.yaml
+secrets.unencrypted.yaml
 
 # Xcode build artifacts
 kage-mac-helper/.xcodebuild/
