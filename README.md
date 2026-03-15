@@ -1,18 +1,26 @@
 # Kage
 
-**Hardware-backed age plugin for teams (v2 in progress).**
+**Local trust runtime for developer workflows.**
 
-Kage v2 is a native `age` plugin with a daemon that unwraps environment keys using platform hardware (Secure Enclave on macOS, TPM2 on Linux) and wraps age file keys using XChaCha20-Poly1305.
+Kage v3 is a resident daemon that performs policy-gated cryptographic operations on behalf of developer tools. It generalizes the v2 hardware-backed age plugin into a broader capability security runtime with adapters for secret management, code signing, assertions, and artifact verification.
+
+## What It Does
+
+- **Secret management**: Encrypt, decrypt, and inject secrets into processes (`kage run`)
+- **Age/SOPS integration**: Hardware-backed age plugin for transparent encryption/decryption
+- **Git signing**: Ed25519 commit/tag signing via SSH signature format
+- **Assertion tokens**: Short-lived signed tokens for local auth workflows
+- **Artifact signing**: File and release manifest signing with verification
+- **Audit trail**: Append-only NDJSON log of all trust operations
 
 ## Documentation
 
-*   [**v2 Design Spec**](docs/v2/DESIGN_SPEC_V2.md)
-*   [**v2 Implementation Guide**](docs/v2/IMPLEMENTATION_GUIDE.md)
-*   [**v2 IPC Protocol**](docs/v2/IPC_PROTOCOL.md)
-*   [**v2 Security & Crypto**](docs/v2/SECURITY_AND_CRYPTO.md)
-*   Legacy v1 docs remain under `docs/`.
+- [Architecture](docs/ARCHITECTURE.md) -- system design, crate layout, data flow
+- [v3 Design Spec](docs/v3/DESIGN_SPEC_V3.md) -- full design specification
+- [v3 Implementation Status](docs/v3/IMPLEMENTATION_STATUS.md) -- what's done, what's left, platform-specific work
+- [v2 docs](docs/v2/) -- previous version reference (IPC protocol, security model, etc.)
 
-## Installation (Homebrew)
+## Installation (Homebrew, macOS)
 
 macOS requirements: Apple silicon (arm64) + macOS 26+.
 
@@ -27,7 +35,7 @@ export SOPS_AGE_KEY_CMD="kage identity"
 
 ## Development Setup
 
-This project uses `mise` to manage dependencies (Rust, Just, SOPS, Age). Run everything via `mise` so you don’t depend on system/Homebrew versions.
+This project uses `mise` to manage toolchain dependencies (Rust, Just, SOPS, Age).
 
 ```bash
 mise trust --all --yes
@@ -37,33 +45,35 @@ mise install
 ### Building
 
 ```bash
-mise run build
+mise run build        # Build everything (Rust + macOS helper if on macOS)
+cargo build --release # Rust-only build on any platform
 ```
-This builds:
 
-- `target/release/kage` (admin CLI)
-- `target/release/kaged` (daemon, Linux/macOS dev)
-- `target/release/age-plugin-kage` (age plugin)
+Produces:
 
-The `Justfile` remains as a compatibility wrapper (it calls the `mise` tasks).
+- `target/release/kage` -- admin CLI
+- `target/release/kaged` -- daemon
+- `target/release/age-plugin-kage` -- age plugin
+- `target/release/kage-git-signer` -- git signing binary
+
+### Testing
+
+```bash
+cargo test            # 74 tests across all crates
+cargo clippy          # Lint check
+mise run ci           # Full CI: fmt + clippy + test
+```
 
 ## Usage
 
-The commands below assume `kage` is on your `PATH` (Homebrew install). When developing from source, use `./target/release/kage` instead.
-
 ### 1. Start the daemon
-macOS (XPC `com.kage.daemon`):
 
 ```bash
-# Homebrew users: `brew install --cask kage-helper` installs + loads the LaunchAgent.
-# Source users: end-to-end smoke (installs app, starts LaunchAgent, runs sops roundtrip)
-mise run macos-smoke
-```
-
-Linux (Unix socket `~/.kage/kaged.sock`):
-
-```bash
+# Linux / WSL2 (Unix socket at ~/.kage/kaged.sock):
 kaged
+
+# macOS (XPC com.kage.daemon):
+brew install --cask kage-helper   # installs + loads LaunchAgent
 ```
 
 ### 2. Enroll this machine
@@ -72,30 +82,90 @@ kaged
 kage setup --org my-org --env dev --env prod --1p-vault "Private"
 ```
 
-### 3. List recipients (for `.sops.yaml`)
+### 3. Use with SOPS/age
 
 ```bash
-kage list
-```
-
-### 4. Use with SOPS/age
-
-```bash
-# Source build only:
-# export PATH="$PWD/target/release:$PATH"
-
-# Tell sops how to get an age identity (kage prints plugin identity lines).
 export SOPS_AGE_KEY_CMD="kage identity"
-
-# Encrypt using a Kage recipient (from `kage list`)
-mise exec -- sops -e --age "age1kage1..." secrets.plain.yaml > secrets.yaml
-
-# Decrypt (plugin will call the daemon)
-mise exec -- sops -d secrets.yaml
+sops -e --age "age1kage1..." secrets.yaml > secrets.enc.yaml
+sops -d secrets.enc.yaml
 ```
+
+### 4. Manage secrets
+
+```bash
+kage secret set dev DB_PASS --value "s3cret"
+kage secret get dev DB_PASS
+kage secret list dev
+
+# Run a process with secrets injected:
+kage run dev -- ./my-app --flag
+kage run dev --mode tempfile -- ./my-app   # secrets as temp files
+```
+
+### 5. Signing
+
+```bash
+# Initialize signing key
+kage sign init dev
+
+# Sign data from stdin
+echo "payload" | kage sign data dev
+
+# Git integration
+kage sign git-setup dev              # configure git globally
+git commit -S -m "signed commit"     # uses kage-git-signer
+```
+
+### 6. Assertions
+
+```bash
+kage assert issue dev --purpose admin --ttl 60
+kage assert verify dev --token <token>
+```
+
+### 7. Artifact signing
+
+```bash
+kage artifact sign dev --file release.tar.gz
+kage artifact verify dev --signature release.tar.gz.kage-sig
+kage artifact sign-manifest dev --dir dist/
+kage artifact verify-manifest dev --manifest manifest.json --dir dist/
+```
+
+### 8. Session control
+
+```bash
+kage unlock --env prod --duration 60   # unlock for 60s
+kage lock --env prod                   # revoke immediately
+kage doctor                            # check daemon connectivity
+```
+
+## Workspace Structure
+
+```
+crates/
+├── kage-types/         Shared type definitions
+├── kage-audit/         NDJSON audit subsystem
+├── kage-comm/          Crypto, transport, IPC, signing formats
+├── kage-cli/           Admin CLI
+├── kaged/              Daemon with 6 adapters
+├── age-plugin-kage/    age plugin binary
+├── kage-git-signer/    Git signing binary
+└── kage-wsl-bridge/    WSL2 relay (scaffold)
+```
+
+## Platform Support
+
+| Platform | Status | Protector |
+| --- | --- | --- |
+| macOS (arm64) | Production | Secure Enclave via XPC |
+| Linux | Production | TPM2 via tpm2-tools, devwrap fallback |
+| WSL2 | Scaffold | Relay to Windows daemon |
+| Windows | Designed | DPAPI (planned), named pipes |
 
 ## Troubleshooting
 
-*   **SOPS says it can’t find plugin**: ensure `age-plugin-kage` is on `PATH` (see above).
-*   **Daemon unreachable (macOS)**: ensure `kage-helper` is running (`launchctl print gui/$(id -u)/com.kage.daemon`).
-*   **Daemon unreachable (Linux)**: start `kaged` and confirm the socket exists at `~/.kage/kaged.sock`.
+- **SOPS can't find plugin**: ensure `age-plugin-kage` is on `PATH`
+- **Daemon unreachable (macOS)**: check LaunchAgent (`launchctl print gui/$(id -u)/com.kage.daemon`)
+- **Daemon unreachable (Linux)**: start `kaged` and confirm socket at `~/.kage/kaged.sock`
+- **Daemon unreachable (WSL2)**: start `kage-wsl-bridge` and ensure Windows daemon is running
