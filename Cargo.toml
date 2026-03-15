@@ -3,5 +3,6 @@ members = [
     "crates/kage-types",
     "crates/kage-audit",
     "crates/kage-comm",
+    "crates/kaged",
 ]
 resolver = "2"

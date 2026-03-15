@@ -1,0 +1,33 @@
+[package]
+name = "kaged"
+version = "3.0.0-alpha.1"
+edition = "2021"
+
+[[bin]]
+name = "kaged"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0"
+base64 = "0.22"
+clap = { version = "4.4", features = ["derive"] }
+dirs = "5.0"
+async-trait = "0.1"
+chrono = "0.4"
+hex = "0.4"
+kage-audit = { path = "../kage-audit" }
+kage-comm = { path = "../kage-comm" }
+kage-types = { path = "../kage-types" }
+rand = "0.8"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.38", features = ["rt-multi-thread", "macros", "net", "io-util", "time", "signal", "sync"] }
+zeroize = { version = "1.8", features = ["derive"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+which = "6.0"
+
+[dev-dependencies]
+ed25519-dalek = "2"
+tempfile = "3.23"
