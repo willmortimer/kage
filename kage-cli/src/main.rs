@@ -1,476 +1,278 @@
-mod cli;
-mod helpers;
+mod onepassword;
+mod platform;
 
-use anyhow::bail;
 use anyhow::Context;
-use clap::Parser;
-use cli::{Cli, Commands};
-use helpers::HelperKeystore;
-use kage_core::backend::OnePasswordBackend;
-use kage_core::config::{
-    BackendConfig, Config, DeviceConfig, KeystoreConfig, OnePasswordConfig, OrgConfig,
-    PolicyConfig, Tpm2Config,
-};
-use kage_core::crypto::{bech32_age_secret, derive_k_env};
-use kage_core::error::{KageError, Result};
-use kage_core::keystore::DeviceKeystore;
-use std::collections::HashMap;
+use clap::{Parser, Subcommand};
+use kage_comm::crypto;
+use kage_comm::devwrap;
+use kage_comm::kid::{derive_kid, Kid};
+use kage_comm::transport::default_daemon_transport;
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fs;
-use std::io::{self, Write};
+use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
 
-fn get_config_dir() -> Result<PathBuf> {
-    let home = dirs::home_dir().ok_or(KageError::Config("No home dir".into()))?;
-    #[cfg(target_os = "macos")]
-    let path = home.join("Library/Application Support/kage");
-    #[cfg(target_os = "linux")]
-    let path = home.join(".config/kage");
-
-    if !path.exists() {
-        fs::create_dir_all(&path)?;
-    }
-    Ok(path)
+#[derive(Parser)]
+#[command(name = "kage")]
+#[command(about = "Kage v2 admin CLI (setup/diagnostics/session control)")]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
 }
 
-fn get_data_dir() -> Result<PathBuf> {
-    let home = dirs::home_dir().ok_or(KageError::Config("No home dir".into()))?;
-    #[cfg(target_os = "macos")]
-    let path = home.join("Library/Application Support/kage"); // Same as config for mac? Spec says so.
-    #[cfg(target_os = "linux")]
-    let path = home.join(".local/share/kage");
-
-    if !path.exists() {
-        fs::create_dir_all(&path)?;
-    }
-    Ok(path)
+#[derive(Subcommand)]
+enum Commands {
+    /// Enrollment flow: fetch org root key, derive env keys, and write local records
+    Setup {
+        #[arg(long)]
+        org: String,
+        #[arg(long)]
+        env: Vec<String>,
+        /// 1Password vault containing the org root key
+        #[arg(long = "1p-vault")]
+        vault: String,
+        /// Optional existing 1Password item id (if omitted, it is created)
+        #[arg(long = "1p-item-id")]
+        item_id: Option<String>,
+        /// Policy per env (repeatable): e.g. --policy dev=none --policy prod=strong
+        #[arg(long)]
+        policy: Vec<String>,
+    },
+    /// Print Kage recipients (age1kage...) for configured envs
+    List,
+    /// Verify daemon connectivity and config sanity
+    Doctor,
+    /// Create a temporary unlock session for a KID (Strong policy batching)
+    Unlock {
+        #[arg(long)]
+        env: String,
+        #[arg(long, default_value_t = 60)]
+        duration: u32,
+    },
+    /// Print an `age` plugin identity for `sops`/`age` decryption (non-secret)
+    Identity,
 }
 
-fn load_config() -> Result<Option<Config>> {
-    let dir = get_config_dir()?;
-    let path = dir.join("config.toml");
-    if !path.exists() {
-        return Ok(None);
-    }
-    let content = fs::read_to_string(path)?;
-    let config: Config = toml::from_str(&content).map_err(|e| KageError::Config(e.to_string()))?;
-    Ok(Some(config))
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct Config {
+    version: u32,
+    org: String,
+    onepassword_vault: String,
+    onepassword_item_id: String,
+    envs: BTreeMap<String, EnvConfig>,
 }
 
-fn save_config(config: &Config) -> Result<()> {
-    let dir = get_config_dir()?;
-    let path = dir.join("config.toml");
-    let content = toml::to_string(config).map_err(|e| KageError::Config(e.to_string()))?;
-    fs::write(path, content)?;
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct EnvConfig {
+    kid_bech32: String,
+    policy: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct EnvRecord {
+    kid_bech32: String,
+    policy: String,
+    wrapped_k_env_b64: String,
+}
+
+fn config_path() -> anyhow::Result<PathBuf> {
+    Ok(devwrap::v2_dir()?.join("config.toml"))
+}
+
+fn records_dir() -> anyhow::Result<PathBuf> {
+    Ok(devwrap::v2_dir()?.join("records"))
+}
+
+fn record_path(kid: Kid) -> anyhow::Result<PathBuf> {
+    Ok(records_dir()?.join(format!("{}.json", kid.to_base64url_nopad())))
+}
+
+fn save_config(cfg: &Config) -> anyhow::Result<()> {
+    let path = config_path()?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let toml = toml::to_string_pretty(cfg)?;
+    fs::write(&path, toml)?;
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
     Ok(())
 }
 
-fn env_policy(config: &Config, env: &str) -> String {
-    let danger = config
-        .org
-        .danger_levels
-        .get(env)
-        .map(|s| s.as_str())
-        .unwrap_or("medium");
-    config
-        .policy
-        .mapping
-        .get(danger)
-        .map(|s| s.as_str())
-        .unwrap_or("presence")
-        .to_string()
+fn load_config() -> anyhow::Result<Config> {
+    let path = config_path()?;
+    let s = fs::read_to_string(&path)
+        .with_context(|| format!("missing config at {}", path.display()))?;
+    Ok(toml::from_str(&s)?)
 }
 
-fn env_label(config: &Config, env: &str) -> String {
-    if cfg!(target_os = "macos") {
-        format!("kage-{}-{}", config.org.id, env)
-    } else {
-        config
-            .device
-            .keystore
-            .tpm2
-            .as_ref()
-            .expect("TPM config must exist on non-macOS")
-            .handle
-            .clone()
+fn parse_policy_overrides(pairs: &[String]) -> anyhow::Result<BTreeMap<String, String>> {
+    let mut out = BTreeMap::new();
+    for p in pairs {
+        let (env, pol) = p
+            .split_once('=')
+            .with_context(|| format!("invalid --policy value '{p}', expected env=policy"))?;
+        out.insert(env.to_string(), pol.to_string());
     }
+    Ok(out)
 }
 
-fn env_blob_path(config: &Config, env: &str) -> anyhow::Result<PathBuf> {
-    let data_dir = get_data_dir()?;
-    Ok(data_dir
-        .join("wrapped")
-        .join(&config.org.id)
-        .join(env)
-        .join(format!("{}.bin", config.device.id)))
-}
-
-fn load_env_context(config: &Config, env: &str) -> anyhow::Result<(String, String, PathBuf)> {
-    let policy = env_policy(config, env);
-    let label = env_label(config, env);
-    let blob_path = env_blob_path(config, env)?;
-    if !blob_path.exists() {
-        bail!(
-            "Key blob not found for env '{}'. Run `kage init --env {}` first.",
-            env,
-            env
-        );
-    }
-    Ok((policy, label, blob_path))
-}
-
-fn load_k_env(
-    env: &str,
-    keystore: &HelperKeystore,
-    config: &Config,
-) -> anyhow::Result<(Vec<u8>, String, String)> {
-    let (policy, label, blob_path) = load_env_context(config, env)?;
-    let wrapped = fs::read(&blob_path)
-        .with_context(|| format!("Failed to read blob at {}", blob_path.display()))?;
-    let k_env_bytes = keystore
-        .unwrap(&wrapped, &label, &policy)
-        .with_context(|| "Failed to unwrap K_env with helper")?;
-    Ok((k_env_bytes, policy, label))
-}
-
-fn age_identity_for_env(
-    env: &str,
-    keystore: &HelperKeystore,
-    config: &Config,
-) -> anyhow::Result<(String, String, String)> {
-    let (k_env_bytes, policy, label) = load_k_env(env, keystore, config)?;
-    let k_env: [u8; 32] = k_env_bytes
-        .try_into()
-        .map_err(|_| KageError::Crypto("Invalid key length".into()))?;
-    let identity = bech32_age_secret(&k_env)?;
-    Ok((identity, policy, label))
-}
-
-fn ensure_sops_available() -> anyhow::Result<()> {
-    which::which("sops")
-        .map(|_| ())
-        .with_context(|| "sops not found in PATH; install SOPS or add it to PATH")
-}
-
-fn derive_recipient_from_identity(identity: &str) -> anyhow::Result<String> {
-    which::which("age-keygen")
-        .map(|_| ())
-        .with_context(|| "age-keygen not found in PATH; install age to derive recipient")?;
-
-    let mut child = Command::new("age-keygen")
-        .arg("-y")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .with_context(|| "Failed to spawn age-keygen -y")?;
-
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin
-            .write_all(format!("{identity}\n").as_bytes())
-            .with_context(|| "Failed to write identity to age-keygen stdin")?;
-    }
-
-    let output = child
-        .wait_with_output()
-        .with_context(|| "Failed to read age-keygen output")?;
-
-    if !output.status.success() {
-        bail!(
-            "age-keygen -y failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
-}
-
-fn run_sops_decrypt(
-    env: &str,
-    file: &str,
-    output: Option<String>,
-    keystore: &HelperKeystore,
-    config: &Config,
-) -> anyhow::Result<()> {
-    ensure_sops_available()?;
-    let (identity, _, _) = age_identity_for_env(env, keystore, config)?;
-
-    let mut cmd = Command::new("sops");
-    cmd.env("SOPS_AGE_KEY", &identity).arg("-d").arg(file);
-
-    let res = cmd.output().with_context(|| "Failed to run sops -d")?;
-    if !res.status.success() {
-        bail!(
-            "sops decrypt failed: {}",
-            String::from_utf8_lossy(&res.stderr)
-        );
-    }
-
-    if let Some(out_path) = output {
-        fs::write(&out_path, &res.stdout)
-            .with_context(|| format!("Failed to write output to {}", out_path))?;
-    } else {
-        io::stdout().write_all(&res.stdout)?;
-    }
-    Ok(())
-}
-
-fn run_sops_encrypt(
-    env: &str,
-    file: &str,
-    output: Option<String>,
-    recipient: Option<String>,
-    keystore: &HelperKeystore,
-    config: &Config,
-) -> anyhow::Result<()> {
-    ensure_sops_available()?;
-    let (identity, _, _) = age_identity_for_env(env, keystore, config)?;
-    let recip = if let Some(r) = recipient {
-        r
-    } else {
-        derive_recipient_from_identity(&identity)?
-    };
-
-    let mut cmd = Command::new("sops");
-    cmd.env("SOPS_AGE_KEY", &identity)
-        .arg("-e")
-        .arg("--age")
-        .arg(&recip)
-        .arg(file);
-
-    let res = cmd.output().with_context(|| "Failed to run sops -e")?;
-    if !res.status.success() {
-        bail!(
-            "sops encrypt failed: {}",
-            String::from_utf8_lossy(&res.stderr)
-        );
-    }
-
-    if let Some(out_path) = output {
-        fs::write(&out_path, &res.stdout)
-            .with_context(|| format!("Failed to write output to {}", out_path))?;
-    } else {
-        io::stdout().write_all(&res.stdout)?;
-    }
-    Ok(())
-}
-
-fn run_self_test(env: &str, keystore: &HelperKeystore, config: &Config) -> anyhow::Result<()> {
-    let (_, policy, label) = load_k_env(env, keystore, config)?;
-    keystore
-        .ensure_key(&label, &policy)
-        .with_context(|| "Failed to ensure key exists before self-test")?;
-
-    let sample = b"ping";
-    let ct = keystore
-        .wrap(sample, &label, &policy)
-        .with_context(|| "Self-test encrypt failed")?;
-    let pt = keystore
-        .unwrap(&ct, &label, &policy)
-        .with_context(|| "Self-test decrypt failed")?;
-
-    if pt != sample {
-        bail!("Self-test roundtrip mismatch");
-    }
-
-    println!(
-        "Self-test ok for env '{}' (label='{}', policy='{}')",
-        env, label, policy
-    );
-    Ok(())
-}
-
-fn main() -> anyhow::Result<()> {
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    let keystore = HelperKeystore::new()?;
-    let backend = OnePasswordBackend::new();
 
     match cli.command {
-        Commands::Init {
-            org_id,
+        Commands::Setup {
+            org,
             env,
             vault,
-            non_interactive: _,
+            item_id,
+            policy,
         } => {
-            // Check dependencies
-            if !keystore.is_available() {
-                anyhow::bail!("Hardware backend unavailable");
-            }
+            let policy_overrides = parse_policy_overrides(&policy)?;
+            let backend = onepassword::OnePasswordBackend::new();
 
-            // Generate or fetch K_org
-            // Check if config exists to get item_id, else None
-            let mut config = load_config()?.unwrap_or_else(|| {
-                // Create default config
-                Config {
-                    version: 1,
-                    device: DeviceConfig {
-                        id: uuid::Uuid::new_v4().to_string(),
-                        hostname: hostname::get().unwrap_or_default().to_string_lossy().into(),
-                        keystore: KeystoreConfig {
-                            keystore_type: "auto".into(),
-                            tpm2: Some(Tpm2Config {
-                                handle: "0x81000001".into(),
-                                pcr_banks: vec![0, 2, 7],
-                            }),
-                        },
-                    },
-                    backend: BackendConfig {
-                        onepassword: OnePasswordConfig {
-                            vault: vault.clone(),
-                            item_id: None,
-                        },
-                    },
-                    org: OrgConfig {
-                        id: org_id.clone(),
-                        envs: vec![],
-                        danger_levels: HashMap::from([
-                            ("dev".into(), "low".into()),
-                            ("stage".into(), "medium".into()),
-                            ("prod".into(), "high".into()),
-                        ]),
-                    },
-                    policy: PolicyConfig {
-                        mapping: HashMap::from([
-                            ("low".into(), "none".into()),
-                            ("medium".into(), "presence".into()),
-                            ("high".into(), "strong".into()),
-                        ]),
-                    },
-                }
-            });
+            let (resolved_item_id, k_org) = backend
+                .ensure_k_org(&vault, item_id.as_deref())
+                .context("failed to fetch or create org root key in 1Password")?;
 
-            // Check 1Password
-            let (item_id, k_org) = backend
-                .ensure_k_org(
-                    &config.backend.onepassword.vault,
-                    config.backend.onepassword.item_id.as_deref(),
-                )
-                .context("Failed to ensure K_org in 1Password")?;
-
-            config.backend.onepassword.item_id = Some(item_id);
-            config.org.envs = env.clone(); // Update envs
-
-            // Save config early
-            save_config(&config)?;
-
-            let data_dir = get_data_dir()?;
-
+            let mut envs_cfg = BTreeMap::new();
             for e in &env {
-                // Derive K_env
-                let k_env = derive_k_env(&k_org, e);
+                let kid = derive_kid(&org, e);
+                let kid_bech32 = kid.to_bech32()?;
 
-                // Determine policy
-                let danger = config
-                    .org
-                    .danger_levels
+                let policy = policy_overrides
                     .get(e)
-                    .map(|s| s.as_str())
-                    .unwrap_or("medium");
-                let policy = config
-                    .policy
-                    .mapping
-                    .get(danger)
-                    .map(|s| s.as_str())
-                    .unwrap_or("presence");
+                    .cloned()
+                    .unwrap_or_else(|| default_policy_for_env(e));
 
-                // Label selection:
-                // - macOS uses per-environment Secure Enclave keys: `kage-{org_id}-{env}`.
-                // - TPM v1 uses the single persistent handle from config; all envs share that key/policy.
+                let k_env = crypto::derive_k_env(&k_org, &org, e)?;
+                let mut k_env_arr = [0u8; 32];
+                k_env_arr.copy_from_slice(&k_env[..]);
+                let wrapped_k_env_b64 = platform::wrap_k_env(kid, &policy, &k_env_arr)?;
 
-                let label = if cfg!(target_os = "macos") {
-                    format!("kage-{}-{}", org_id, e)
-                } else {
-                    config.device.keystore.tpm2.as_ref().unwrap().handle.clone()
+                let record = EnvRecord {
+                    kid_bech32: kid_bech32.clone(),
+                    policy: policy.clone(),
+                    wrapped_k_env_b64,
                 };
 
-                keystore.ensure_key(&label, policy)?;
+                let rp = record_path(kid)?;
+                if let Some(parent) = rp.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                fs::write(&rp, serde_json::to_vec_pretty(&record)?)?;
+                fs::set_permissions(&rp, fs::Permissions::from_mode(0o600))?;
 
-                let wrapped = keystore.wrap(&k_env, &label, policy)?;
-
-                // Write to disk
-                let blob_path = data_dir.join("wrapped").join(&org_id).join(e);
-                fs::create_dir_all(&blob_path)?;
-                fs::write(blob_path.join(format!("{}.bin", config.device.id)), wrapped)?;
+                envs_cfg.insert(e.to_string(), EnvConfig { kid_bech32, policy });
             }
 
-            println!("Initialization complete.");
-        }
-        Commands::AgeIdentities { env } => {
-            let config = load_config()?.context("Config not found. Run init first.")?;
-            let (identity, _, _) = age_identity_for_env(&env, &keystore, &config)?;
-            println!("{}", identity);
-        }
-        Commands::SelfTest { env } => {
-            let config = load_config()?.context("Config not found. Run init first.")?;
-            run_self_test(&env, &keystore, &config)?;
-        }
-        Commands::RotateDeviceKey { env } => {
-            let config = load_config()?.context("Config not found")?;
-            let (policy, label, blob_path) = load_env_context(&config, &env)?;
-            let wrapped = fs::read(&blob_path)?;
+            save_config(&Config {
+                version: 2,
+                org,
+                onepassword_vault: vault,
+                onepassword_item_id: resolved_item_id,
+                envs: envs_cfg,
+            })?;
 
-            // 1. Unwrap old
-            // If unwrap fails (e.g. stale ACLs or auth failure), we fallback to 1Password recovery
-            let k_env = match keystore.unwrap(&wrapped, &label, &policy) {
-                Ok(bytes) => bytes,
+            println!("kage setup complete.");
+        }
+        Commands::List => {
+            let cfg = load_config()?;
+            for (env, e) in cfg.envs {
+                println!("{env}\t{}\t{}", e.kid_bech32, e.policy);
+            }
+        }
+        Commands::Doctor => {
+            let transport = default_daemon_transport()?;
+            match transport.ping().await {
+                Ok(s) => println!("daemon: {s}"),
                 Err(e) => {
-                    let msg = e.to_string();
-                    // Check for Auth Failed (2), Auth Not Enrolled (3), or helper stderr containing interaction/auth keywords
-                    // Also check for "Helper decrypt failed" which is the generic wrapper for stderr output
-                    if msg.contains("Auth Failed")
-                        || msg.contains("Auth Not Enrolled")
-                        || msg.contains("interaction")
-                        || msg.contains("deny")
-                    {
-                        eprintln!("Warning: Unwrap blocked by ACL / interaction policy ({}). Recovering from 1Password...", msg);
-                        // Re-instantiate backend and fetch
-                        let (item_id, k_org) = backend.ensure_k_org(
-                            &config.backend.onepassword.vault,
-                            config.backend.onepassword.item_id.as_deref(),
-                        )?;
-
-                        // Update config if item_id changed (unlikely but possible)
-                        if config.backend.onepassword.item_id.as_deref() != Some(&item_id) {
-                            let mut new_config = config.clone();
-                            new_config.backend.onepassword.item_id = Some(item_id);
-                            save_config(&new_config)?;
-                        }
-
-                        // Derive k_env
-                        derive_k_env(&k_org, &env).to_vec()
-                    } else {
-                        // For other errors (IO, binary missing, etc.), bail out
-                        return Err(e.into());
-                    }
+                    println!("daemon: unavailable ({e})");
                 }
-            };
-
-            // 2. Delete
-            keystore.delete_key(&label)?;
-
-            // 3. Create
-            keystore.ensure_key(&label, &policy)?;
-
-            // 4. Wrap
-            let new_wrapped = keystore.wrap(&k_env, &label, &policy)?;
-
-            // 5. Write
-            fs::write(blob_path, new_wrapped)?;
-
-            println!("Key rotated successfully.");
+            }
+            let cfg = load_config()?;
+            println!("config: ok (org={}, envs={})", cfg.org, cfg.envs.len());
         }
-        Commands::SopsDecrypt { env, file, output } => {
-            let config = load_config()?.context("Config not found. Run init first.")?;
-            run_sops_decrypt(&env, &file, output, &keystore, &config)?;
+        Commands::Unlock { env, duration } => {
+            let cfg = load_config()?;
+            let e = cfg
+                .envs
+                .get(&env)
+                .with_context(|| format!("unknown env '{env}'"))?;
+            let transport = default_daemon_transport()?;
+            transport.unlock(&e.kid_bech32, duration).await?;
+            println!("unlocked env={env} for {duration}s");
         }
-        Commands::SopsEncrypt {
-            env,
-            file,
-            output,
-            recipient,
-        } => {
-            let config = load_config()?.context("Config not found. Run init first.")?;
-            run_sops_encrypt(&env, &file, output, recipient, &keystore, &config)?;
+        Commands::Identity => {
+            println!("{}", kage_comm::kid::plugin_identity()?);
         }
     }
 
     Ok(())
+}
+
+fn default_policy_for_env(env: &str) -> String {
+    match env {
+        "prod" | "production" => "strong".into(),
+        "stage" | "staging" => "presence".into(),
+        _ => "none".into(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn with_temp_v2_dir<T>(f: impl FnOnce(&TempDir) -> T) -> T {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("KAGE_V2_DIR", dir.path());
+        let out = f(&dir);
+        std::env::remove_var("KAGE_V2_DIR");
+        out
+    }
+
+    #[test]
+    fn config_roundtrip() {
+        with_temp_v2_dir(|_dir| {
+            let cfg = Config {
+                version: 2,
+                org: "acme".to_string(),
+                onepassword_vault: "Private".to_string(),
+                onepassword_item_id: "item123".to_string(),
+                envs: BTreeMap::from([(
+                    "dev".to_string(),
+                    EnvConfig {
+                        kid_bech32: derive_kid("acme", "dev").to_bech32().unwrap(),
+                        policy: "none".to_string(),
+                    },
+                )]),
+            };
+
+            save_config(&cfg).unwrap();
+            let got = load_config().unwrap();
+
+            assert_eq!(got.version, cfg.version);
+            assert_eq!(got.org, cfg.org);
+            assert_eq!(got.onepassword_vault, cfg.onepassword_vault);
+            assert_eq!(got.onepassword_item_id, cfg.onepassword_item_id);
+            assert_eq!(got.envs.len(), 1);
+            assert_eq!(got.envs.get("dev").unwrap().policy, "none");
+        });
+    }
+
+    #[test]
+    fn record_path_is_safe_filename() {
+        with_temp_v2_dir(|_dir| {
+            let kid = derive_kid("acme", "prod");
+            let rp = record_path(kid).unwrap();
+            let fname = rp.file_name().unwrap().to_string_lossy();
+            assert!(fname.ends_with(".json"));
+            assert!(!fname.contains('/'));
+        });
+    }
 }
