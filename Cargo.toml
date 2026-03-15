@@ -1,7 +1,8 @@
 [workspace]
 members = [
-    "kage-core",
+    "kage-comm",
     "kage-cli",
+    "age-plugin-kage",
+    "kaged",
 ]
 resolver = "2"
-
