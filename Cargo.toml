@@ -4,5 +4,6 @@ members = [
     "kage-cli",
     "age-plugin-kage",
     "kaged",
+    "crates/kage-types",
 ]
 resolver = "2"
