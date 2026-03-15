@@ -1,0 +1,185 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    env:
+      MISE_TASK_OUTPUT: prefix
+      KAGE_VERSION: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup mise
+        uses: jdx/mise-action@v3
+        with:
+          version: 2025.11.11
+          install: true
+          cache: true
+
+      - name: Print mise version
+        run: mise -v
+
+      - name: Trust mise config
+        run: mise trust --all --yes
+
+      - name: Validate tasks
+        run: mise tasks validate --errors-only
+
+      - name: Run ci
+        env:
+          MISE_JOBS: "4"
+          MISE_TASK_OUTPUT: prefix
+        run: mise run ci
+
+      - name: Build + package
+        run: |
+          set -euo pipefail
+          mise run build-rust
+          bash scripts/release/package.sh
+
+      - name: Upload dist artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-linux
+          if-no-files-found: error
+          retention-days: 30
+          path: dist/*
+
+  macos:
+    # Requires a self-hosted macOS runner with Apple silicon (ARM64) and macOS 26+.
+    runs-on: [self-hosted, macOS, ARM64]
+    env:
+      MISE_TASK_OUTPUT: prefix
+      KAGE_VERSION: ${{ github.ref_name }}
+      KAGE_MACOS_DEPLOYMENT_TARGET: "26.0"
+      # Release signing/notarization credentials (set these in repo secrets).
+      KAGE_DEVELOPMENT_TEAM: ${{ secrets.MACOS_SIGNING_TEAM_ID }}
+      KAGE_CODESIGN_IDENTITY: ${{ secrets.MACOS_CODESIGN_IDENTITY }}
+      KAGE_CODESIGN_TIMESTAMP: "1"
+      KAGE_BUNDLE_IDENTIFIER: ${{ secrets.MACOS_BUNDLE_IDENTIFIER }}
+      KAGE_XCODE_ALLOW_PROVISIONING_UPDATES: "0"
+      KAGE_XCODE_CODE_SIGN_STYLE: "Manual"
+      KAGE_XCODE_CODE_SIGN_IDENTITY: ${{ secrets.MACOS_XCODE_CODE_SIGN_IDENTITY }}
+      AC_NOTARY_KEY_ID: ${{ secrets.AC_NOTARY_KEY_ID }}
+      AC_NOTARY_ISSUER_ID: ${{ secrets.AC_NOTARY_ISSUER_ID }}
+      AC_NOTARY_PRIVATE_KEY_BASE64: ${{ secrets.AC_NOTARY_PRIVATE_KEY_BASE64 }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup mise
+        uses: jdx/mise-action@v3
+        with:
+          version: 2025.11.11
+          install: true
+          cache: true
+
+      - name: Print mise version
+        run: mise -v
+
+      - name: Trust mise config
+        run: mise trust --all --yes
+
+      - name: Validate tasks
+        run: mise tasks validate --errors-only
+
+      - name: Assert runner compatibility (arm64 + macOS 26+)
+        run: |
+          set -euo pipefail
+          arch="$(uname -m)"
+          if [[ "${arch}" != "arm64" ]]; then
+            echo "expected arm64 runner, got: ${arch}" >&2
+            exit 1
+          fi
+          ver="$(sw_vers -productVersion)"
+          major="${ver%%.*}"
+          if [[ "${major}" -lt 26 ]]; then
+            echo "expected macOS 26+ runner, got: ${ver}" >&2
+            exit 1
+          fi
+
+      - name: Import Developer ID certificate
+        env:
+          P12_BASE64: ${{ secrets.MACOS_SIGNING_CERT_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.MACOS_SIGNING_CERT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64, os, pathlib
+          p = pathlib.Path(os.environ["RUNNER_TEMP"]) / "developer_id.p12"
+          p.write_bytes(base64.b64decode(os.environ["P12_BASE64"]))
+          print(p)
+          PY
+          KEYCHAIN="${RUNNER_TEMP}/kage-signing.keychain-db"
+          KEYCHAIN_PW="$(uuidgen)"
+          echo "::add-mask::${KEYCHAIN_PW}"
+          security create-keychain -p "${KEYCHAIN_PW}" "${KEYCHAIN}"
+          security set-keychain-settings -lut 21600 "${KEYCHAIN}"
+          security unlock-keychain -p "${KEYCHAIN_PW}" "${KEYCHAIN}"
+          security import "${RUNNER_TEMP}/developer_id.p12" -k "${KEYCHAIN}" -P "${P12_PASSWORD}" -T /usr/bin/codesign -T /usr/bin/security -T /usr/bin/xcrun
+          security set-key-partition-list -S apple-tool:,apple: -s -k "${KEYCHAIN_PW}" "${KEYCHAIN}"
+          security list-keychains -d user -s "${KEYCHAIN}" login.keychain-db
+          security find-identity -v -p codesigning
+
+      - name: Build + sign + notarize + package
+        run: |
+          set -euo pipefail
+          mise run ci
+          mise run build-rust
+          mise run build-mac --force
+          mise run codesign-rust
+          bash scripts/release/notarize-macos.sh
+          bash scripts/release/package.sh
+
+      - name: Upload dist artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-macos-arm64
+          if-no-files-found: error
+          retention-days: 30
+          path: dist/*
+
+  publish:
+    needs: [linux, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download dist artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Generate combined checksums
+        run: |
+          set -euo pipefail
+          cd dist
+          rm -f SHA256SUMS.txt
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum $(ls -1 | grep -v '^SHA256SUMS') > SHA256SUMS.txt
+          else
+            shasum -a 256 $(ls -1 | grep -v '^SHA256SUMS') > SHA256SUMS.txt
+          fi
+          echo "wrote dist/SHA256SUMS.txt"
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+
+      - name: Update Homebrew tap (formula + cask)
+        if: ${{ secrets.HOMEBREW_TAP_TOKEN != '' }}
+        env:
+          KAGE_VERSION: ${{ github.ref_name }}
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          HOMEBREW_TAP_REPO: ${{ secrets.HOMEBREW_TAP_REPO != '' && secrets.HOMEBREW_TAP_REPO || format('{0}/homebrew-kage', github.repository_owner) }}
+        run: bash scripts/release/update-homebrew-tap.sh

@@ -1,0 +1,35 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup mise
+        uses: jdx/mise-action@v3
+        with:
+          version: 2025.11.11
+          install: true
+          cache: true
+
+      - name: Print mise version
+        run: mise -v
+
+      - name: Trust mise config
+        run: mise trust --all --yes
+
+      - name: Validate tasks
+        run: mise tasks validate --errors-only
+
+      - name: Run ci
+        env:
+          MISE_JOBS: "4"
+          MISE_TASK_OUTPUT: prefix
+        run: mise run ci

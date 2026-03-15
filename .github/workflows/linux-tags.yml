@@ -1,0 +1,46 @@
+name: linux-tags
+
+on:
+  workflow_dispatch:
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    env:
+      MISE_TASK_OUTPUT: prefix
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup mise
+        uses: jdx/mise-action@v3
+        with:
+          version: 2025.11.11
+          install: true
+          cache: true
+
+      - name: Print mise version
+        run: mise -v
+
+      - name: Trust mise config
+        run: mise trust --all --yes
+
+      - name: Validate tasks
+        run: mise tasks validate --errors-only
+
+      - name: Doctor
+        run: mise run doctor
+
+      - name: Release build
+        run: mise run release-build
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: kage-linux-${{ github.ref_name }}
+          if-no-files-found: error
+          retention-days: 30
+          path: |
+            target/release/kage
+            target/release/kaged
+            target/release/age-plugin-kage
+            .mise-cache/build-mac.noop
