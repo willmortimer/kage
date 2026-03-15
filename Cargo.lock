@@ -656,6 +656,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "kage-audit"
+version = "3.0.0-alpha.1"
+dependencies = [
+ "dirs",
+ "kage-types",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "kage-cli"
 version = "2.0.0"
 dependencies = [
