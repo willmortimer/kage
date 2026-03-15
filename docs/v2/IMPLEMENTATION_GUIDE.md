@@ -28,25 +28,31 @@ kage-comm: This is the glue. It defines the DaemonTransport trait, the IPC Reque
 
 ## 2. Build Workflows
 
-We use `just` to orchestrate builds across Rust (Cargo) and Swift (Xcode).
+We use `mise` tasks as the primary task runner. The `Justfile` remains as a compatibility wrapper.
 
 ### Standard Commands
 
 ```
 # Build Everything (Detects OS)
-just build
+mise run build
 
 # Build only Rust components
-just build-rust
+mise run build-rust
 
 # Build macOS Helper (Xcode)
-just build-mac
+mise run build-mac
 
 # Run Tests (Unit + Integration)
-just test
+mise run test
 
-# Install to System (for local dev)
-just install
+# CI suite (fmt-check + clippy + tests)
+MISE_JOBS=4 MISE_TASK_OUTPUT=prefix mise run ci
+
+# macOS: install + restart daemon + sops smoke (local dev mode)
+mise run macos-smoke
+
+# macOS: signed mode smoke (Team ID enforcement)
+mise run macos-smoke-signed
 ```
 
 ### Development Environment
@@ -64,6 +70,12 @@ Signing: The macOS Helper MUST be signed to interact with the Secure Enclave.
 - Local Dev: Use "Sign to Run Locally" (Ad-hoc).
 - Release: Requires Apple Developer ID Application certificate.
 
+Codesigning variables are intentionally not committed. Copy `.env.example` to `.env.local` and set:
+
+- `KAGE_DEVELOPMENT_TEAM` (Apple Team ID)
+- `KAGE_CODESIGN_IDENTITY` (e.g. SHA-1 from `security find-identity -v -p codesigning`)
+- `KAGE_BUNDLE_IDENTIFIER` (optional; for unique local bundle IDs)
+
 ## 3. Implementation Checklist
 
 ### Phase 1: Shared Core (kage-comm)
@@ -77,6 +89,10 @@ Signing: The macOS Helper MUST be signed to interact with the Secure Enclave.
 - [ ] Implement JSON-RPC server over Unix Socket.
 - [ ] Implement TpmsStore (File-based mock first, then tss-esapi).
 - [ ] Wire up Wrap/Unwrap logic.
+
+Notes:
+
+- This repo currently includes a file-based “devwrap” store for `K_env` under `~/.kage/v2/` as a stand-in for TPM2/Secure Enclave integration.
 
 ### Phase 3: macOS Daemon (KageHelper)
 

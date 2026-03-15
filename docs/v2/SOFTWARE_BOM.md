@@ -45,7 +45,8 @@ This document defines the approved technology stack for Kage v2. Deviations from
 ### Language & Runtime
 
 - Language: Swift 5.9+
-- Minimum OS: macOS 14.0 (Sonoma)
+- Minimum OS: macOS 26.0
+- Supported arch: Apple silicon (arm64) only
 
 Frameworks:
 
@@ -62,6 +63,7 @@ Frameworks:
 
 ## 3. Build & Dev Tools
 
-- Task Runner: `just` (Justfile) - Central entry point for all build/test commands.
+- Task Runner: `mise` tasks (`mise.toml`) - Central entry point for all build/test commands.
+- Compatibility Wrapper: `just` (Justfile) - Kept for now as a thin wrapper around `mise run ...`.
 - Dependency Manager: `cargo` (Rust), `xcodebuild` (Swift).
 - Version Manager: `mise` (Manages Rust, Just, SOPS versions).

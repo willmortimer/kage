@@ -38,9 +38,13 @@ Open your .zshrc or .bashrc and remove any lines exporting AGE_IDENTITIES_COMMAN
 
 Install the new native CLI and Daemon.
 
+macOS requirements: macOS 26+ on Apple silicon (arm64).
+
 ```
 # Via Homebrew (macOS)
+brew tap willmortimer/kage
 brew install kage
+brew install --cask kage-helper
 
 # Or Cargo (Rust)
 cargo install kage-cli --force
@@ -52,7 +56,10 @@ cargo install kage-cli --force
 Run the setup wizard. This will contact 1Password, fetch your Organization Root Key, and re-enroll your device using the new v2 cryptographic format.
 
 ```
-kage setup
+kage setup --org <org> --env dev --env prod --1p-vault "<vault>"
+
+# Optional: enforce stronger policy per environment
+# kage setup --org <org> --env dev --env prod --1p-vault "<vault>" --policy prod=strong
 ```
 
 
