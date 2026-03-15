@@ -1,6 +1,128 @@
+min_version = { hard = "2025.11.11", soft = "2025.10.0" }
+
 [tools]
 rust = "latest"
 just = "latest"
 sops = "latest"
 age = "latest"
 
+[tasks.build-rust]
+description = "Build Rust components"
+run = "cargo build --release -p kage-cli -p kaged -p age-plugin-kage"
+sources = [
+  "Cargo.toml",
+  "Cargo.lock",
+  "age-plugin-kage/Cargo.toml",
+  "age-plugin-kage/src/**/*.rs",
+  "kage-cli/Cargo.toml",
+  "kage-cli/src/**/*.rs",
+  "kage-comm/Cargo.toml",
+  "kage-comm/src/**/*.rs",
+  "kaged/Cargo.toml",
+  "kaged/src/**/*.rs",
+]
+outputs = ["target/release/kage", "target/release/kaged", "target/release/age-plugin-kage"]
+
+[tasks.lint]
+description = "Rust clippy"
+run = "cargo clippy --all-targets --all-features -- -D warnings"
+
+[tasks.fmt-check]
+description = "Rust formatting (check)"
+hide = true
+run = "cargo fmt --all -- --check"
+
+[tasks.build]
+description = "Build everything"
+depends = ["build-rust", "build-mac"]
+
+[tasks.fmt]
+description = "Rust formatting"
+run = "cargo fmt"
+
+[tasks.test]
+description = "Run all tests"
+depends = ["build-rust"]
+run = "cargo test --workspace"
+
+[tasks.ci]
+description = "CI: fmt-check + lint + test (parallel)"
+run = [{ tasks = ["fmt-check", "lint", "test"] }]
+
+[tasks.doctor]
+description = "Sanity-check local prerequisites"
+run = "scripts/mise/doctor.sh"
+
+[tasks.release-build]
+description = "Build release artifacts and assert they exist"
+depends = ["build-rust", "build-mac-unsigned"]
+run = "scripts/mise/assert-artifacts.sh"
+
+[tasks.build-signed]
+description = "Build + codesign for macOS XPC testing"
+depends = ["build-mac", "codesign-rust"]
+
+[tasks.build-mac]
+description = "Build macOS helper (Xcode)"
+depends = ["build-rust"]
+run = "scripts/mise/build-mac.sh"
+env.KAGE_MAC_BUILD_VARIANT = "signed"
+sources = ["kage-mac-helper/KageHelper/**/*.swift", "kage-mac-helper/KageHelper/**/*.plist", "kage-mac-helper/KageHelper/**/*.pbxproj", "kage-comm/**/*.rs", "kage-comm/objc/*.m", "scripts/mise/build-mac.sh"]
+outputs = ["target/release/KageHelper.app/Contents/MacOS/KageHelper", ".mise-cache/build-mac.noop", ".mise-cache/build-mac.signed"]
+
+[tasks.build-mac-unsigned]
+description = "Build macOS helper (Xcode, no codesigning)"
+depends = ["build-rust"]
+hide = true
+alias = ["mac-unsigned"]
+env.KAGE_CODESIGN = "0"
+run = "scripts/mise/build-mac.sh"
+env.KAGE_MAC_BUILD_VARIANT = "unsigned"
+sources = ["kage-mac-helper/KageHelper/**/*.swift", "kage-mac-helper/KageHelper/**/*.plist", "kage-mac-helper/KageHelper/**/*.pbxproj", "kage-comm/**/*.rs", "kage-comm/objc/*.m", "scripts/mise/build-mac.sh"]
+outputs = ["target/release/KageHelper.app/Contents/MacOS/KageHelper", ".mise-cache/build-mac.noop", ".mise-cache/build-mac.unsigned"]
+
+[tasks.codesign-rust]
+description = "Codesign Rust binaries for local macOS XPC testing"
+hide = true
+depends = ["build-rust"]
+run = "scripts/mise/codesign-rust.sh"
+
+[tasks.macos-smoke]
+description = "Install + restart daemon and run end-to-end smoke (local dev)"
+depends = ["build-mac-unsigned"]
+confirm = "This installs /Applications/KageHelper.app and restarts the com.kage.daemon LaunchAgent. Continue?"
+run = "scripts/mise/macos-smoke.sh"
+env.KAGE_SMOKE_SIGNED = "0"
+alias = ["install-macos"]
+
+[tasks.macos-smoke-signed]
+description = "Install + restart daemon and run end-to-end smoke (signed mode)"
+depends = ["build-signed"]
+confirm = "This installs /Applications/KageHelper.app and restarts the com.kage.daemon LaunchAgent. Continue?"
+run = "scripts/mise/macos-smoke.sh"
+env.KAGE_SMOKE_SIGNED = "1"
+alias = ["install-macos-signed"]
+
+[tasks.package]
+description = "Package release artifacts into dist/"
+depends = ["build-rust", "build-mac"]
+run = "bash scripts/release/package.sh"
+
+[tasks.package-signed]
+description = "Package signed macOS artifacts into dist/"
+depends = ["build-signed"]
+run = "bash scripts/release/package.sh"
+hide = true
+
+[tasks.test-rust]
+description = "Run Rust tests"
+run = "cargo test"
+
+[tasks.test-crypto]
+description = "Run shared crypto tests"
+run = "cargo test -p kage-comm"
+
+[tasks.clean]
+description = "Clean build artifacts"
+confirm = "This deletes Rust target/ and Xcode derived data. Continue?"
+run = ["cargo clean", "rm -rf kage-mac-helper/.xcodebuild"]
