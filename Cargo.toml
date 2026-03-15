@@ -6,5 +6,7 @@ members = [
     "crates/kaged",
     "crates/kage-cli",
     "crates/age-plugin-kage",
+    "crates/kage-git-signer",
+    "crates/kage-wsl-bridge",
 ]
 resolver = "2"

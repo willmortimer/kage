@@ -1,0 +1,16 @@
+[package]
+name = "kage-git-signer"
+version = "3.0.0-alpha.1"
+edition = "2021"
+
+[[bin]]
+name = "kage-git-signer"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0"
+base64 = "0.22"
+kage-comm = { path = "../kage-comm" }
+kage-types = { path = "../kage-types" }
+serde_json = "1.0"
+tokio = { version = "1.38", features = ["rt-multi-thread", "macros"] }
