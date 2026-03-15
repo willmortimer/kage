@@ -82,6 +82,11 @@ pub struct UnlockParams {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LockParams {
+    pub kid_bech32: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct JsonRpcRequest<T> {
     pub jsonrpc: String,
     pub id: u64,
